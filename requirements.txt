@@ -1,0 +1,11 @@
+# Portfolio Automation - Dependencies
+# ====================================
+
+# Core
+pandas>=2.0.0
+openpyxl>=3.1.0      # Para leer .xlsx
+xlrd>=2.0.0          # Para leer .xls legacy
+
+# Opcional - para futura expansión
+# python-dotenv>=1.0.0  # Variables de entorno
+# requests>=2.31.0      # Si necesitas llamadas API
