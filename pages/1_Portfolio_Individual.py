@@ -41,10 +41,10 @@ def cached_get_historial_tenencias():
     return sheets.get_historial_tenencias()
 
 @st.cache_data(ttl=300)
-def cached_get_detalle_activos(comitente: str):
-    """Carga detalle de activos con cache."""
+def cached_get_detalle_activos(comitente: str, fecha: str = None):
+    """Carga detalle de activos con cache. Si no se pasa fecha, devuelve la más reciente."""
     sheets = get_sheets_manager()
-    return sheets.get_detalle_activos(comitente)
+    return sheets.get_detalle_activos(comitente, fecha)
 
 @st.cache_data(ttl=300)
 def cached_get_target_allocation(comitente: str):
@@ -69,8 +69,39 @@ def clear_all_cache():
 # FUNCIONES
 # =============================================================================
 
-def get_portfolio_data(comitente: str) -> pd.DataFrame:
-    """Obtiene los últimos datos de un portfolio desde Sheets."""
+def get_available_dates_for_comitente(comitente: str) -> list:
+    """Obtiene las fechas disponibles para un comitente."""
+    try:
+        df_hist = cached_get_historial_tenencias()
+        if df_hist.empty:
+            return []
+
+        # Convertir fecha
+        if len(df_hist) > 0:
+            sample_fecha = df_hist['fecha'].iloc[0]
+            if isinstance(sample_fecha, str) and len(str(sample_fecha)) >= 10 and '-' in str(sample_fecha):
+                df_hist['fecha'] = df_hist['fecha'].astype(str)
+            else:
+                df_hist['fecha'] = pd.to_numeric(df_hist['fecha'], errors='coerce')
+                df_hist['fecha'] = pd.to_datetime(df_hist['fecha'], origin='1899-12-30', unit='D', errors='coerce')
+                df_hist['fecha'] = df_hist['fecha'].dt.strftime('%Y-%m-%d')
+
+        df_hist['comitente'] = df_hist['comitente'].astype(str).str.strip()
+        comitente_str = str(comitente).strip()
+
+        df_filtered = df_hist[df_hist['comitente'] == comitente_str]
+        if df_filtered.empty:
+            return []
+
+        fechas = sorted(df_filtered['fecha'].unique(), reverse=True)
+        return [f for f in fechas if f and f != 'nan']
+
+    except Exception:
+        return []
+
+
+def get_portfolio_data(comitente: str, fecha: str = None) -> pd.DataFrame:
+    """Obtiene datos de un portfolio desde Sheets para una fecha específica."""
     try:
         # Usar versión cacheada para reducir llamadas API
         df_hist = cached_get_historial_tenencias()
@@ -106,15 +137,19 @@ def get_portfolio_data(comitente: str) -> pd.DataFrame:
         df_hist['comitente'] = df_hist['comitente'].astype(str).str.strip()
         comitente_str = str(comitente).strip()
 
-        # Filtrar por comitente y última fecha
+        # Filtrar por comitente
         df_filtered = df_hist[df_hist['comitente'] == comitente_str]
         if df_filtered.empty:
             return pd.DataFrame()
 
-        ultima_fecha = df_filtered['fecha'].max()
-        df_latest = df_filtered[df_filtered['fecha'] == ultima_fecha]
+        # Filtrar por fecha específica o última disponible
+        if fecha:
+            df_result = df_filtered[df_filtered['fecha'] == fecha]
+        else:
+            ultima_fecha = df_filtered['fecha'].max()
+            df_result = df_filtered[df_filtered['fecha'] == ultima_fecha]
 
-        return df_latest
+        return df_result
 
     except Exception as e:
         st.error(f"Error cargando datos: {e}")
@@ -264,6 +299,36 @@ with col2:
             clear_all_cache()
             st.rerun()
 
+# Selector de fecha
+st.markdown("---")
+fechas_disponibles = get_available_dates_for_comitente(selected_comitente)
+
+col_fecha1, col_fecha2, col_fecha3 = st.columns([2, 2, 1])
+
+with col_fecha1:
+    if fechas_disponibles:
+        fecha_options = ["Última disponible"] + fechas_disponibles
+        selected_fecha_option = st.selectbox(
+            "📅 Fecha de datos:",
+            options=fecha_options,
+            index=0,
+            key="fecha_selector",
+            help="Selecciona una fecha para ver datos históricos"
+        )
+        selected_fecha = None if selected_fecha_option == "Última disponible" else selected_fecha_option
+    else:
+        selected_fecha = None
+        st.info("No hay fechas históricas disponibles")
+
+with col_fecha2:
+    if fechas_disponibles:
+        fecha_mostrar = selected_fecha if selected_fecha else fechas_disponibles[0]
+        st.metric("📆 Fecha de los datos", fecha_mostrar)
+
+with col_fecha3:
+    if fechas_disponibles and len(fechas_disponibles) > 1:
+        st.caption(f"📊 {len(fechas_disponibles)} fechas disponibles")
+
 # Inicializar sheets manager para uso global
 sheets = get_sheets_manager()
 
@@ -273,12 +338,12 @@ portfolio_load_error = None
 
 with st.spinner("Cargando datos..."):
     try:
-        df_portfolio = get_portfolio_data(selected_comitente)
+        df_portfolio = get_portfolio_data(selected_comitente, selected_fecha)
     except Exception as e:
         portfolio_load_error = str(e)
 
-# Cargar también detalle de activos (para edición) - usar cache
-df_activos = cached_get_detalle_activos(selected_comitente)
+# Cargar también detalle de activos (para edición) - usar cache con fecha seleccionada
+df_activos = cached_get_detalle_activos(selected_comitente, selected_fecha)
 has_activos = not df_activos.empty
 
 # Mostrar estado
@@ -296,27 +361,46 @@ if df_portfolio.empty and has_activos:
     st.info("Puedes ver y editar los activos abajo. Para ver el análisis de alocación, procesa un Excel con datos actualizados.")
 
 # =============================================================================
-# ANÁLISIS DE ALOCACIÓN (solo si hay datos de historial)
+# ANÁLISIS DE ALOCACIÓN (usa detalle_activos si está disponible para reflejar cambios de clasificación)
 # =============================================================================
 
-if not df_portfolio.empty:
+# Determinar qué datos usar para el análisis
+# Prioridad: detalle_activos (tiene clasificaciones actualizadas) > historial_tenencias
+if has_activos:
+    # Usar detalle_activos con clasificaciones actualizadas
+    df_analysis = df_activos[['categoria', 'valor']].copy()
+    df_analysis = df_analysis.groupby('categoria').agg({'valor': 'sum'}).reset_index()
+    valor_total = df_analysis['valor'].sum()
+    # Usar la fecha seleccionada o la última disponible
+    ultima_fecha = selected_fecha if selected_fecha else (fechas_disponibles[0] if fechas_disponibles else "Sin fecha")
+    has_data_for_analysis = True
+elif not df_portfolio.empty:
+    # Fallback a historial_tenencias
+    df_analysis = df_portfolio[['categoria', 'valor']].copy()
+    valor_total = df_analysis['valor'].sum()
+    ultima_fecha = df_portfolio.iloc[0]['fecha']
+    has_data_for_analysis = True
+else:
+    has_data_for_analysis = False
+
+if has_data_for_analysis:
     st.markdown("---")
     st.header("📊 Análisis de Alocación")
 
-    # Preparar datos para análisis
-    df_analysis = df_portfolio[['categoria', 'valor']].copy()
-
-    # Calcular totales
-    valor_total = df_analysis['valor'].sum()
-    ultima_fecha = df_portfolio.iloc[0]['fecha']
+    # Obtener TC para conversión a USD
+    tc_info = sheets.get_tc_for_comitente(selected_comitente)
+    tc_mep = tc_info.get('tc_mep', 1200)  # Default si no hay TC
+    valor_total_usd = valor_total / tc_mep if tc_mep > 0 else 0
 
     # Métricas principales
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("💰 Valor Total", format_currency(valor_total))
+        st.metric("💰 Valor Total ARS", format_currency(valor_total))
     with col2:
-        st.metric("📅 Última Actualización", ultima_fecha)
+        st.metric("💵 Valor Total USD", f"USD {valor_total_usd:,.0f}")
     with col3:
+        st.metric("📅 Fecha Datos", ultima_fecha)
+    with col4:
         categorias_count = df_analysis['categoria'].nunique()
         st.metric("🏷️ Categorías", categorias_count)
 
@@ -428,7 +512,9 @@ if not df_portfolio.empty:
 
         with col1:
             # Actual
-            actual_data = comparison[comparison['actual_pct'] > 0][['categoria', 'actual_pct', 'valor_actual']].copy()
+            actual_data = comparison[comparison['actual_pct'] > 0][['categoria', 'actual_pct']].copy()
+            # Calcular valor desde porcentaje
+            actual_data['valor'] = (actual_data['actual_pct'] / 100) * valor_total
             colors_actual = [CATEGORY_COLORS.get(cat, '#999999') for cat in actual_data['categoria']]
 
             fig_actual = px.pie(
@@ -441,7 +527,7 @@ if not df_portfolio.empty:
             )
             fig_actual.update_traces(
                 hovertemplate='<b>%{label}</b><br>Porcentaje: %{value:.1f}%<br>Valor: $%{customdata:,.0f}<extra></extra>',
-                customdata=actual_data['valor_actual']
+                customdata=actual_data['valor']
             )
             fig_actual.update_layout(hoverlabel=dict(bgcolor="white", font_size=12))
             st.plotly_chart(fig_actual, use_container_width=True)
@@ -476,8 +562,8 @@ if not df_portfolio.empty:
     st.markdown("---")
     st.header("📝 Detalle de Posiciones")
 
-    df_detail = df_portfolio[['categoria', 'valor']].copy()
-    df_summary = df_detail.groupby('categoria')['valor'].sum().reset_index()
+    # Usar df_analysis que ya está preparado con los datos correctos
+    df_summary = df_analysis.copy()
     df_summary = df_summary.sort_values('valor', ascending=False)
     df_summary['porcentaje'] = (df_summary['valor'] / df_summary['valor'].sum() * 100).round(1)
 

@@ -265,7 +265,8 @@ with tab2:
             perfil_base = KNOWN_PORTFOLIOS.get(comitente, {}).get('perfil', 'N/A')
 
             with st.expander(f"📁 {nombre} ({comitente}) - Perfil base: {perfil_base}"):
-                df_display = df_comitente[['categoria', 'porcentaje_custom']].copy()
+                df_display = df_comitente[['categoria', 'objetivo_pct']].copy()
+                df_display['objetivo_pct'] = pd.to_numeric(df_display['objetivo_pct'], errors='coerce').fillna(0)
                 df_display.columns = ['Categoría', 'Porcentaje Custom']
                 df_display['Porcentaje Custom'] = df_display['Porcentaje Custom'].apply(lambda x: f"{x:.1f}%")
                 st.dataframe(df_display, use_container_width=True, hide_index=True)

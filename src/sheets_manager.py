@@ -680,14 +680,21 @@ class SheetsManager:
 
             # Encontrar filas a eliminar (de abajo hacia arriba para no desplazar índices)
             comitente_str = str(comitente).strip()
-            rows_to_clear = []
+            rows_to_delete = []
             for i, row in enumerate(data):
-                if str(row.get('comitente', '')).strip() == comitente_str:
-                    rows_to_clear.append(i + 2)  # +2 por header y base 1
+                row_comitente = str(row.get('comitente', '')).strip()
+                if row_comitente == comitente_str:
+                    rows_to_delete.append(i + 2)  # +2 por header y base 1
 
-            # Limpiar filas (de abajo hacia arriba)
-            for row_num in reversed(rows_to_clear):
-                range_name = f"{SHEET_DETALLE_ACTIVOS}!A{row_num}:K{row_num}"
+            if not rows_to_delete:
+                logger.info(f"No hay filas previas para eliminar de {comitente}")
+                return
+
+            logger.info(f"Eliminando {len(rows_to_delete)} filas de detalle_activos para {comitente}")
+
+            # Limpiar filas (de abajo hacia arriba) - usar rango completo hasta columna L (12 cols)
+            for row_num in reversed(rows_to_delete):
+                range_name = f"{SHEET_DETALLE_ACTIVOS}!A{row_num}:L{row_num}"
                 self.sheets_service.spreadsheets().values().clear(
                     spreadsheetId=self.spreadsheet_id,
                     range=range_name
@@ -696,9 +703,13 @@ class SheetsManager:
         except HttpError as e:
             logger.warning(f"Error eliminando activos anteriores: {e}")
 
-    def get_detalle_activos(self, comitente: str) -> pd.DataFrame:
+    def get_detalle_activos(self, comitente: str, fecha: str = None) -> pd.DataFrame:
         """
         Obtiene el detalle de activos para un comitente.
+
+        Args:
+            comitente: Número de comitente
+            fecha: Fecha específica (YYYY-MM-DD). Si es None, devuelve la más reciente.
 
         Returns:
             DataFrame con ticker, descripcion, cantidad, precio, valor, categoria, tc_mep, tc_ccl
@@ -721,6 +732,17 @@ class SheetsManager:
             for col in numeric_cols:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+            # Filtrar por fecha (la más reciente si no se especifica)
+            if 'fecha' in df.columns:
+                if fecha:
+                    df = df[df['fecha'] == fecha]
+                else:
+                    # Obtener la fecha más reciente
+                    fechas = df['fecha'].unique()
+                    if len(fechas) > 0:
+                        fecha_mas_reciente = sorted(fechas, reverse=True)[0]
+                        df = df[df['fecha'] == fecha_mas_reciente]
 
             return df
 
