@@ -22,6 +22,7 @@ SHEET_SNAPSHOTS = "snapshots_totales"
 SHEET_TICKER_MAPPINGS = "ticker_mappings"
 SHEET_DETALLE_ACTIVOS = "detalle_activos"
 SHEET_CUSTOM_CATEGORIES = "categorias_custom"
+SHEET_PERFILES_CUSTOM = "perfiles_custom"  # Perfiles de alocación personalizados guardados
 
 # Perfiles de alocación por defecto
 DEFAULT_PROFILES = {

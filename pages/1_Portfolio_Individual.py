@@ -58,12 +58,25 @@ def cached_get_custom_ticker_mappings():
     sheets = get_sheets_manager()
     return sheets.get_custom_ticker_mappings()
 
+@st.cache_data(ttl=300)
+def cached_get_custom_profiles():
+    """Carga perfiles custom con cache."""
+    sheets = get_sheets_manager()
+    return sheets.get_custom_profiles()
+
+@st.cache_data(ttl=300)
+def cached_get_custom_profile_allocation(nombre: str):
+    """Carga alocación de un perfil custom específico."""
+    sheets = get_sheets_manager()
+    return sheets.get_custom_profile_allocation(nombre)
+
 def clear_all_cache():
     """Limpia todo el cache de datos."""
     cached_get_historial_tenencias.clear()
     cached_get_detalle_activos.clear()
     cached_get_target_allocation.clear()
     cached_get_custom_ticker_mappings.clear()
+    cached_get_custom_profiles.clear()
 
 # =============================================================================
 # FUNCIONES
@@ -852,35 +865,58 @@ base_profile = portfolio_info['perfil']
 # Selector de perfil de cartera
 from config import DEFAULT_PROFILES
 
+# Obtener perfiles custom disponibles
+custom_profiles = cached_get_custom_profiles()
+
+# Construir opciones: Default profiles + Custom profiles
+profile_options = list(DEFAULT_PROFILES.keys())
+profile_labels = {p: f"📊 {p.title()}" for p in profile_options}
+
+# Agregar perfiles custom con prefijo distintivo
+for cp in custom_profiles:
+    profile_options.append(f"custom:{cp}")
+    profile_labels[f"custom:{cp}"] = f"⭐ {cp}"
+
 profile_col1, profile_col2, profile_col3 = st.columns([2, 1, 2])
 
 with profile_col1:
-    profile_options = list(DEFAULT_PROFILES.keys())
     selected_profile = st.selectbox(
-        "📊 Cargar perfil predefinido:",
+        "📊 Cargar perfil:",
         options=profile_options,
         index=profile_options.index(base_profile) if base_profile in profile_options else 0,
         key=f"profile_selector_{selected_comitente}",
-        format_func=lambda x: x.title()
+        format_func=lambda x: profile_labels.get(x, x.title())
     )
 
 with profile_col2:
     st.markdown("##")  # Spacer
     if st.button("📥 Cargar Perfil", key=f"load_profile_{selected_comitente}"):
-        # Cargar valores del perfil seleccionado
-        profile_values = DEFAULT_PROFILES.get(selected_profile, {})
-        # Guardar como custom allocation
+        # Determinar si es perfil default o custom
+        if selected_profile.startswith("custom:"):
+            # Perfil custom
+            profile_name = selected_profile.replace("custom:", "")
+            profile_values = cached_get_custom_profile_allocation(profile_name)
+        else:
+            # Perfil default
+            profile_values = DEFAULT_PROFILES.get(selected_profile, {})
+
+        # Guardar como custom allocation para este comitente
         full_allocation = {cat: profile_values.get(cat, 0.0) for cat in CATEGORIES}
         try:
             sheets.set_custom_allocation_batch(selected_comitente, full_allocation)
             cached_get_target_allocation.clear()
-            st.success(f"✅ Perfil '{selected_profile.title()}' cargado")
+            profile_display = profile_name if selected_profile.startswith("custom:") else selected_profile.title()
+            st.success(f"✅ Perfil '{profile_display}' cargado")
             st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
 
 with profile_col3:
-    st.info(f"**Perfil actual:** {base_profile.title()}")
+    # Mostrar perfiles custom disponibles
+    if custom_profiles:
+        st.info(f"**Perfil base:** {base_profile.title()}\n\n**Custom:** {len(custom_profiles)} guardados")
+    else:
+        st.info(f"**Perfil base:** {base_profile.title()}")
 
 # Crear inputs para cada categoría
 col1, col2, col3 = st.columns(3)
@@ -933,6 +969,70 @@ with col3:
                 st.rerun()  # Recargar para ver cambios
             except Exception as e:
                 st.error(f"Error guardando alocación: {e}")
+
+# =============================================================================
+# GUARDAR COMO PERFIL REUTILIZABLE
+# =============================================================================
+
+st.markdown("---")
+st.subheader("⭐ Guardar como Perfil Reutilizable")
+st.markdown("*Guarda esta alocación como un perfil que podrás usar en cualquier cliente*")
+
+profile_save_col1, profile_save_col2, profile_save_col3 = st.columns([2, 1, 2])
+
+with profile_save_col1:
+    # Sugerir nombre basado en el cliente actual
+    suggested_name = portfolio_info['nombre'].title()
+    new_profile_name = st.text_input(
+        "Nombre del perfil:",
+        value=suggested_name,
+        placeholder="Ej: Felipe Lopez, Perfil Conservador Plus",
+        key=f"new_profile_name_{selected_comitente}"
+    )
+
+with profile_save_col2:
+    st.markdown("##")  # Spacer
+    if st.button("⭐ Guardar Perfil", key=f"save_as_profile_{selected_comitente}"):
+        if not new_profile_name.strip():
+            st.error("Ingresa un nombre para el perfil")
+        elif abs(total_custom_pct - 100) > 0.1:
+            st.error(f"La suma debe ser 100% antes de guardar. Actualmente: {total_custom_pct:.1f}%")
+        else:
+            try:
+                # Guardar como perfil reutilizable
+                sheets.save_custom_profile(
+                    nombre=new_profile_name.strip(),
+                    allocations=custom_allocation,
+                    creado_por=portfolio_info['nombre']
+                )
+                # Limpiar cache de perfiles custom
+                cached_get_custom_profiles.clear()
+                st.success(f"✅ Perfil '{new_profile_name}' guardado. Ahora está disponible en el selector de perfiles.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error guardando perfil: {e}")
+
+with profile_save_col3:
+    # Mostrar perfiles guardados con opción de eliminar
+    if custom_profiles:
+        st.markdown("**Perfiles guardados:**")
+        for cp in custom_profiles[:5]:  # Mostrar máximo 5
+            col_name, col_del = st.columns([3, 1])
+            with col_name:
+                st.text(f"⭐ {cp}")
+            with col_del:
+                if st.button("🗑️", key=f"del_profile_{cp}", help=f"Eliminar {cp}"):
+                    try:
+                        sheets.delete_custom_profile(cp)
+                        cached_get_custom_profiles.clear()
+                        st.success(f"Perfil '{cp}' eliminado")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        if len(custom_profiles) > 5:
+            st.caption(f"... y {len(custom_profiles) - 5} más")
+    else:
+        st.info("No hay perfiles guardados aún")
 
 # =============================================================================
 # CLASIFICACIÓN DE ACTIVOS

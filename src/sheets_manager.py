@@ -32,6 +32,7 @@ from config import (
     SHEET_DETALLE_ACTIVOS,
     SHEET_CUSTOM_CATEGORIES,
     SHEET_SECTOR_MAPPINGS,
+    SHEET_PERFILES_CUSTOM,
     DEFAULT_PROFILES,
     KNOWN_PORTFOLIOS,
     CATEGORY_COLORS,
@@ -1306,6 +1307,215 @@ class SheetsManager:
                                 [[ticker, sector, descripcion]])
                 return True
             logger.error(f"Error guardando mapeo de sector: {e}")
+            return False
+
+    # =========================================================================
+    # PERFILES CUSTOM (Perfiles de alocación guardados por el usuario)
+    # =========================================================================
+
+    def _create_perfiles_custom_sheet(self):
+        """Crea la hoja perfiles_custom si no existe."""
+        try:
+            self.sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={
+                    'requests': [{
+                        'addSheet': {
+                            'properties': {'title': SHEET_PERFILES_CUSTOM}
+                        }
+                    }]
+                }
+            ).execute()
+
+            # Agregar headers
+            headers = [['nombre', 'categoria', 'objetivo_pct', 'creado_por', 'fecha_creacion']]
+            self._write_range(SHEET_PERFILES_CUSTOM, 'A1', headers)
+            logger.info(f"Hoja {SHEET_PERFILES_CUSTOM} creada")
+
+        except HttpError as e:
+            if 'already exists' in str(e):
+                logger.debug(f"Hoja {SHEET_PERFILES_CUSTOM} ya existe")
+            else:
+                raise
+
+    def get_custom_profiles(self) -> List[str]:
+        """
+        Obtiene lista de nombres de perfiles custom disponibles.
+
+        Returns:
+            Lista de nombres de perfiles únicos
+        """
+        try:
+            data = self._read_all(SHEET_PERFILES_CUSTOM)
+            # Obtener nombres únicos
+            nombres = set()
+            for row in data:
+                nombre = row.get('nombre', '').strip()
+                if nombre:
+                    nombres.add(nombre)
+            return sorted(list(nombres))
+
+        except HttpError as e:
+            if 'Unable to parse range' in str(e):
+                return []
+            logger.warning(f"Error leyendo perfiles custom: {e}")
+            return []
+
+    def get_custom_profile_allocation(self, nombre: str) -> Dict[str, float]:
+        """
+        Obtiene la alocación de un perfil custom específico.
+
+        Args:
+            nombre: Nombre del perfil
+
+        Returns:
+            Dict con {categoria: porcentaje}
+        """
+        try:
+            data = self._read_all(SHEET_PERFILES_CUSTOM)
+            allocation = {}
+            nombre_lower = nombre.lower().strip()
+
+            for row in data:
+                if row.get('nombre', '').lower().strip() == nombre_lower:
+                    cat = row.get('categoria', '')
+                    pct = float(row.get('objetivo_pct', 0))
+                    if cat:
+                        allocation[cat] = pct
+
+            return allocation
+
+        except HttpError as e:
+            if 'Unable to parse range' in str(e):
+                return {}
+            logger.warning(f"Error leyendo perfil custom {nombre}: {e}")
+            return {}
+
+    def save_custom_profile(self, nombre: str, allocations: Dict[str, float],
+                           creado_por: str = "") -> bool:
+        """
+        Guarda un perfil de alocación custom.
+
+        Args:
+            nombre: Nombre del perfil (ej: "Felipe Lopez", "Perfil Agro")
+            allocations: Dict con {categoria: porcentaje}
+            creado_por: Nombre/ID de quien lo creó (opcional)
+
+        Returns:
+            True si se guardó correctamente
+        """
+        try:
+            nombre = nombre.strip()
+            fecha = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+            # 1. Leer datos actuales
+            try:
+                data = self._read_all(SHEET_PERFILES_CUSTOM)
+            except HttpError:
+                self._create_perfiles_custom_sheet()
+                data = []
+
+            # 2. Filtrar filas que NO son de este perfil
+            other_rows = []
+            nombre_lower = nombre.lower()
+            for row in data:
+                if row.get('nombre', '').lower().strip() != nombre_lower:
+                    other_rows.append([
+                        row.get('nombre', ''),
+                        row.get('categoria', ''),
+                        row.get('objetivo_pct', 0),
+                        row.get('creado_por', ''),
+                        row.get('fecha_creacion', '')
+                    ])
+
+            # 3. Crear nuevas filas para este perfil
+            new_rows = []
+            for cat, pct in allocations.items():
+                if pct > 0:  # Solo guardar categorías con porcentaje > 0
+                    new_rows.append([nombre, cat, pct, creado_por, fecha])
+
+            # 4. Combinar y reescribir toda la hoja
+            all_rows = other_rows + new_rows
+            header = [['nombre', 'categoria', 'objetivo_pct', 'creado_por', 'fecha_creacion']]
+            all_data = header + all_rows
+
+            # Limpiar hoja y escribir todo
+            self.sheets_service.spreadsheets().values().clear(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{SHEET_PERFILES_CUSTOM}!A:E"
+            ).execute()
+
+            if all_data:
+                self.sheets_service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"{SHEET_PERFILES_CUSTOM}!A1",
+                    valueInputOption='USER_ENTERED',
+                    body={'values': all_data}
+                ).execute()
+
+            logger.info(f"Perfil custom '{nombre}' guardado con {len(new_rows)} categorías")
+            return True
+
+        except HttpError as e:
+            if 'Unable to parse range' in str(e):
+                self._create_perfiles_custom_sheet()
+                return self.save_custom_profile(nombre, allocations, creado_por)
+            logger.error(f"Error guardando perfil custom: {e}")
+            return False
+
+    def delete_custom_profile(self, nombre: str) -> bool:
+        """
+        Elimina un perfil custom.
+
+        Args:
+            nombre: Nombre del perfil a eliminar
+
+        Returns:
+            True si se eliminó correctamente
+        """
+        try:
+            data = self._read_all(SHEET_PERFILES_CUSTOM)
+            nombre_lower = nombre.lower().strip()
+
+            # Filtrar filas que NO son de este perfil
+            remaining_rows = []
+            deleted = False
+            for row in data:
+                if row.get('nombre', '').lower().strip() != nombre_lower:
+                    remaining_rows.append([
+                        row.get('nombre', ''),
+                        row.get('categoria', ''),
+                        row.get('objetivo_pct', 0),
+                        row.get('creado_por', ''),
+                        row.get('fecha_creacion', '')
+                    ])
+                else:
+                    deleted = True
+
+            if not deleted:
+                return False
+
+            # Reescribir la hoja
+            header = [['nombre', 'categoria', 'objetivo_pct', 'creado_por', 'fecha_creacion']]
+            all_data = header + remaining_rows
+
+            self.sheets_service.spreadsheets().values().clear(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{SHEET_PERFILES_CUSTOM}!A:E"
+            ).execute()
+
+            self.sheets_service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{SHEET_PERFILES_CUSTOM}!A1",
+                valueInputOption='USER_ENTERED',
+                body={'values': all_data}
+            ).execute()
+
+            logger.info(f"Perfil custom '{nombre}' eliminado")
+            return True
+
+        except HttpError as e:
+            logger.error(f"Error eliminando perfil custom: {e}")
             return False
 
 
