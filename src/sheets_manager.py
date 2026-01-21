@@ -89,29 +89,38 @@ class SheetsManager:
 
         # Validar y refrescar si es necesario
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:
-                logger.info("Refrescando token expirado...")
-                self.creds.refresh(Request())
+            # Intentar refrescar si tenemos refresh_token
+            if self.creds and self.creds.refresh_token:
+                try:
+                    logger.info("Refrescando token expirado...")
+                    self.creds.refresh(Request())
+                    logger.info("Token refrescado exitosamente")
 
-                # Si estamos en modo env var, actualizar la variable no es posible
-                # pero el token refrescado funciona en memoria para esta sesión
-                if not google_token_env and TOKEN_FILE.exists():
-                    # Guardar token actualizado solo si estamos en modo archivo
-                    with open(TOKEN_FILE, 'w') as token:
-                        token.write(self.creds.to_json())
+                    # Guardar token actualizado solo si estamos en modo archivo local
+                    if not google_token_env and TOKEN_FILE.exists():
+                        with open(TOKEN_FILE, 'w') as token:
+                            token.write(self.creds.to_json())
+                except Exception as e:
+                    logger.error(f"Error refrescando token: {e}")
+                    if google_token_env:
+                        raise RuntimeError(
+                            f"Error refrescando GOOGLE_TOKEN: {e}. "
+                            "Genera un nuevo token localmente y actualiza la variable de entorno."
+                        )
+                    raise
             else:
-                # Necesitamos autenticar desde cero (solo posible en desarrollo)
-                if google_credentials_env:
-                    # En producción con GOOGLE_CREDENTIALS pero sin token válido
+                # No hay refresh_token, necesitamos autenticar desde cero
+                if google_token_env:
+                    # En producción sin refresh_token válido
                     raise RuntimeError(
-                        "GOOGLE_TOKEN no es válido o está expirado. "
+                        "GOOGLE_TOKEN no tiene refresh_token válido. "
                         "Genera un nuevo token localmente y actualiza la variable de entorno."
                     )
                 elif not CREDENTIALS_FILE.exists():
                     raise FileNotFoundError(
                         f"No se encontró {CREDENTIALS_FILE}. "
                         "Copia credentials.json desde el proyecto de Sol de Mayo, "
-                        "o configura las variables de entorno GOOGLE_TOKEN y GOOGLE_CREDENTIALS."
+                        "o configura la variable de entorno GOOGLE_TOKEN."
                     )
                 else:
                     # Desarrollo: flujo OAuth interactivo
