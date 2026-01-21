@@ -62,7 +62,6 @@ class SheetsManager:
 
         Soporta dos modos:
         1. Variables de entorno (para Render/producción):
-           - GOOGLE_CREDENTIALS: JSON string del archivo credentials.json
            - GOOGLE_TOKEN: JSON string del token (refresh token)
         2. Archivos locales (para desarrollo):
            - credentials.json
@@ -70,9 +69,14 @@ class SheetsManager:
         """
         # Modo 1: Variables de entorno (Render/producción)
         google_token_env = os.environ.get('GOOGLE_TOKEN')
-        google_credentials_env = os.environ.get('GOOGLE_CREDENTIALS')
 
+        # Debug: mostrar si la variable existe
+        logger.info(f"GOOGLE_TOKEN env var exists: {google_token_env is not None}")
         if google_token_env:
+            logger.info(f"GOOGLE_TOKEN length: {len(google_token_env)}")
+            logger.info(f"GOOGLE_TOKEN starts with: {google_token_env[:50] if len(google_token_env) > 50 else google_token_env}")
+
+        if google_token_env and google_token_env.strip().startswith('{'):
             # Usar token desde variable de entorno
             logger.info("Usando credenciales desde variable de entorno GOOGLE_TOKEN")
             try:
@@ -110,7 +114,7 @@ class SheetsManager:
                     raise
             else:
                 # No hay refresh_token, necesitamos autenticar desde cero
-                if google_token_env:
+                if google_token_env and google_token_env.strip().startswith('{'):
                     # En producción sin refresh_token válido
                     raise RuntimeError(
                         "GOOGLE_TOKEN no tiene refresh_token válido. "
