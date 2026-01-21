@@ -57,27 +57,80 @@ class SheetsManager:
         self._authenticate()
 
     def _authenticate(self):
-        """Autenticación con Google API."""
-        if TOKEN_FILE.exists():
+        """
+        Autenticación con Google API.
+
+        Soporta dos modos:
+        1. Variables de entorno (para Render/producción):
+           - GOOGLE_CREDENTIALS: JSON string del archivo credentials.json
+           - GOOGLE_TOKEN: JSON string del token (refresh token)
+        2. Archivos locales (para desarrollo):
+           - credentials.json
+           - token.json
+        """
+        # Modo 1: Variables de entorno (Render/producción)
+        google_token_env = os.environ.get('GOOGLE_TOKEN')
+        google_credentials_env = os.environ.get('GOOGLE_CREDENTIALS')
+
+        if google_token_env:
+            # Usar token desde variable de entorno
+            logger.info("Usando credenciales desde variable de entorno GOOGLE_TOKEN")
+            try:
+                token_data = json.loads(google_token_env)
+                self.creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+            except Exception as e:
+                logger.error(f"Error parseando GOOGLE_TOKEN: {e}")
+                self.creds = None
+
+        # Modo 2: Archivo token.json local (desarrollo)
+        elif TOKEN_FILE.exists():
+            logger.info("Usando credenciales desde archivo token.json")
             self.creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
 
+        # Validar y refrescar si es necesario
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
+                logger.info("Refrescando token expirado...")
                 self.creds.refresh(Request())
+
+                # Si estamos en modo env var, actualizar la variable no es posible
+                # pero el token refrescado funciona en memoria para esta sesión
+                if not google_token_env and TOKEN_FILE.exists():
+                    # Guardar token actualizado solo si estamos en modo archivo
+                    with open(TOKEN_FILE, 'w') as token:
+                        token.write(self.creds.to_json())
             else:
-                if not CREDENTIALS_FILE.exists():
+                # Necesitamos autenticar desde cero (solo posible en desarrollo)
+                if google_credentials_env:
+                    # En producción con GOOGLE_CREDENTIALS pero sin token válido
+                    raise RuntimeError(
+                        "GOOGLE_TOKEN no es válido o está expirado. "
+                        "Genera un nuevo token localmente y actualiza la variable de entorno."
+                    )
+                elif not CREDENTIALS_FILE.exists():
                     raise FileNotFoundError(
                         f"No se encontró {CREDENTIALS_FILE}. "
-                        "Copia credentials.json desde el proyecto de Sol de Mayo."
+                        "Copia credentials.json desde el proyecto de Sol de Mayo, "
+                        "o configura las variables de entorno GOOGLE_TOKEN y GOOGLE_CREDENTIALS."
                     )
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(CREDENTIALS_FILE), SCOPES
-                )
-                self.creds = flow.run_local_server(port=0)
+                else:
+                    # Desarrollo: flujo OAuth interactivo
+                    logger.info("Iniciando flujo OAuth interactivo...")
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        str(CREDENTIALS_FILE), SCOPES
+                    )
+                    self.creds = flow.run_local_server(port=0)
 
-            # Guardar token para próximas sesiones
-            with open(TOKEN_FILE, 'w') as token:
-                token.write(self.creds.to_json())
+                    # Guardar token para próximas sesiones
+                    with open(TOKEN_FILE, 'w') as token:
+                        token.write(self.creds.to_json())
+
+                    # Mostrar el token para configurar en Render
+                    logger.info("=" * 60)
+                    logger.info("TOKEN GENERADO - Copia esto para GOOGLE_TOKEN en Render:")
+                    logger.info("=" * 60)
+                    logger.info(self.creds.to_json())
+                    logger.info("=" * 60)
 
         self.sheets_service = build('sheets', 'v4', credentials=self.creds)
         self.drive_service = build('drive', 'v3', credentials=self.creds)
