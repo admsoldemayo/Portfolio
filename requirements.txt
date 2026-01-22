@@ -13,4 +13,6 @@ plotly>=5.18.0
 # Google Sheets Integration
 google-auth>=2.23.0
 google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.2.0   # Para conexiones thread-safe
 google-api-python-client>=2.100.0
+httplib2>=0.22.0              # Conexiones HTTP

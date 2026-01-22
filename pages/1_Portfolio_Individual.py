@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from config import KNOWN_PORTFOLIOS, CATEGORY_COLORS, CATEGORIES, SECTORS, SECTOR_COLORS
-from sheets_manager import get_sheets_manager
+from sheets_manager import get_sheets_manager, reset_sheets_manager
 from allocation_manager import AllocationManager
 from portfolio_tracker import PortfolioTracker
 from asset_mapper import ASSET_CATEGORIES, add_custom_mapping, get_category_display_name, classify_sector, get_sector_display_name
@@ -400,8 +400,20 @@ if has_data_for_analysis:
     st.markdown("---")
     st.header("📊 Análisis de Alocación")
 
-    # Obtener TC para conversión a USD
-    tc_info = sheets.get_tc_for_comitente(selected_comitente)
+    # Obtener TC para conversión a USD (con retry si hay error SSL)
+    try:
+        tc_info = sheets.get_tc_for_comitente(selected_comitente)
+    except Exception as e:
+        if 'SSL' in str(e) or 'ssl' in str(e) or 'DECRYPTION' in str(e):
+            # Error SSL - resetear conexión y reintentar
+            reset_sheets_manager()
+            sheets = get_sheets_manager()
+            try:
+                tc_info = sheets.get_tc_for_comitente(selected_comitente)
+            except Exception:
+                tc_info = {'tc_mep': 1200, 'tc_ccl': 1200}
+        else:
+            tc_info = {'tc_mep': 1200, 'tc_ccl': 1200}
     tc_mep = tc_info.get('tc_mep', 1200)  # Default si no hay TC
     valor_total_usd = valor_total / tc_mep if tc_mep > 0 else 0
 

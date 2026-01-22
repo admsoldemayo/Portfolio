@@ -15,7 +15,7 @@ import random
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from config import KNOWN_PORTFOLIOS, DEFAULT_PROFILES, CATEGORIES, CATEGORY_COLORS
-from sheets_manager import get_sheets_manager
+from sheets_manager import get_sheets_manager, reset_sheets_manager
 from portfolio_tracker import PortfolioTracker
 from asset_mapper import get_all_categories, get_category_display_name
 

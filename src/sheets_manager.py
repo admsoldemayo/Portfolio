@@ -17,6 +17,8 @@ from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 
 from config import (
     CREDENTIALS_FILE,
@@ -146,8 +148,16 @@ class SheetsManager:
                     logger.info(self.creds.to_json())
                     logger.info("=" * 60)
 
-        self.sheets_service = build('sheets', 'v4', credentials=self.creds)
-        self.drive_service = build('drive', 'v3', credentials=self.creds)
+        # Crear HTTP clients separados para evitar errores SSL en entornos multi-thread (Streamlit)
+        # httplib2 no es thread-safe, así que cada servicio necesita su propio client
+        http_sheets = httplib2.Http()
+        authed_http_sheets = AuthorizedHttp(self.creds, http=http_sheets)
+        self.sheets_service = build('sheets', 'v4', http=authed_http_sheets, cache_discovery=False)
+
+        http_drive = httplib2.Http()
+        authed_http_drive = AuthorizedHttp(self.creds, http=http_drive)
+        self.drive_service = build('drive', 'v3', http=authed_http_drive, cache_discovery=False)
+
         logger.info("Autenticación con Google exitosa")
 
     def get_or_create_spreadsheet(self) -> str:
@@ -1523,13 +1533,29 @@ class SheetsManager:
 _sheets_manager = None
 
 
-def get_sheets_manager() -> SheetsManager:
-    """Obtiene instancia singleton del manager."""
+def get_sheets_manager(force_new: bool = False) -> SheetsManager:
+    """
+    Obtiene instancia singleton del manager.
+
+    Args:
+        force_new: Si True, crea una nueva instancia ignorando el singleton.
+                   Útil si hay errores de conexión SSL.
+    """
     global _sheets_manager
-    if _sheets_manager is None:
+    if _sheets_manager is None or force_new:
         _sheets_manager = SheetsManager()
         _sheets_manager.get_or_create_spreadsheet()
     return _sheets_manager
+
+
+def reset_sheets_manager():
+    """
+    Resetea el singleton del manager.
+    Útil para recuperarse de errores SSL en Streamlit.
+    """
+    global _sheets_manager
+    _sheets_manager = None
+    logger.info("SheetsManager reseteado")
 
 
 # =============================================================================

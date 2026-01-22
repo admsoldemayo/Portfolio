@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from config import KNOWN_PORTFOLIOS, DEFAULT_PROFILES, CATEGORIES
-from sheets_manager import get_sheets_manager
+from sheets_manager import get_sheets_manager, reset_sheets_manager
 
 # =============================================================================
 # CONFIGURACIÓN
