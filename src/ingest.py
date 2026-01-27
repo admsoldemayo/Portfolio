@@ -635,6 +635,10 @@ def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
 
                 results[comitente] = result
                 logger.info(f"  -> Guardado exitoso para {comitente} ({len(activos)} activos)")
+                # Liberar memoria
+                del activos
+                import gc
+                gc.collect()
                 # Rate limiting: esperar 3 segundos entre carteras para no exceder 60 writes/min
                 time.sleep(3)
             except Exception as e:

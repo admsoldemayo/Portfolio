@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 import tempfile
 import os
+import gc  # Para liberar memoria
 
 # Agregar src al path para importar módulos
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -307,52 +308,72 @@ def main():
 
             st.success(f"📁 {len(saved_files)} archivos guardados en data/input/")
 
-            # 2. Procesar archivos
-            st.subheader("⚙️ Procesando...")
-            all_dfs = []
+            # 2. Procesar y guardar archivos UNO POR UNO (para no exceder memoria)
+            st.subheader("⚙️ Procesando y guardando...")
             progress = st.progress(0)
+            status_text = st.empty()
+            results_container = st.container()
+
+            all_results = {}
+            exitos = 0
+            errores = 0
 
             for i, file_path in enumerate(saved_files):
-                df = process_local_file(file_path)
-                if not df.empty:
-                    all_dfs.append(df)
+                meta = parse_filename(str(file_path))
+                nombre_display = meta.get('nombre') or meta.get('comitente') or file_path.name
+                status_text.text(f"Procesando: {nombre_display}...")
+
+                try:
+                    # Procesar archivo
+                    df = process_local_file(file_path)
+
+                    if not df.empty:
+                        # Guardar inmediatamente en Sheets (no acumular en memoria)
+                        result = save_to_sheets(df, auto_save=True)
+                        all_results.update(result)
+
+                        # Contar éxitos/errores
+                        for comitente, res in result.items():
+                            if 'error' not in res:
+                                exitos += 1
+                                with results_container:
+                                    st.caption(f"✅ {nombre_display}")
+                            else:
+                                errores += 1
+                                with results_container:
+                                    st.caption(f"❌ {nombre_display}: {res['error']}")
+
+                        # Liberar memoria inmediatamente
+                        del df
+                        del result
+
+                except Exception as e:
+                    errores += 1
+                    with results_container:
+                        st.caption(f"❌ {nombre_display}: {str(e)}")
+
+                # Forzar liberación de memoria después de cada archivo
+                gc.collect()
                 progress.progress((i + 1) / len(saved_files))
 
             progress.empty()
+            status_text.empty()
 
-            if all_dfs:
-                df_master = pd.concat(all_dfs, ignore_index=True)
+            # Resumen final
+            st.markdown("---")
+            if exitos > 0:
+                st.success(f"✅ **{exitos} carteras actualizadas exitosamente**")
+            if errores > 0:
+                st.warning(f"⚠️ {errores} archivos con errores")
 
-                # 3. Guardar en Google Sheets
-                st.subheader("📊 Actualizando Google Sheets...")
+            sheets_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+            st.markdown(f"📊 [**Ver en Google Sheets**]({sheets_url})")
 
-                with st.spinner("Guardando..."):
-                    try:
-                        results = save_to_sheets(df_master, auto_save=True)
+            if exitos > 0:
+                st.balloons()
 
-                        if results:
-                            exitos = sum(1 for r in results.values() if 'error' not in r)
-                            st.success(f"✅ **{exitos} carteras actualizadas**")
-
-                            with st.expander("Ver detalles"):
-                                for comitente, result in results.items():
-                                    nombre = KNOWN_PORTFOLIOS.get(comitente, {}).get('nombre', comitente)
-                                    if 'error' not in result:
-                                        var = result.get('variacion_pct', 'N/A')
-                                        st.success(f"✅ {nombre}: {var}")
-                                    else:
-                                        st.error(f"❌ {nombre}: {result['error']}")
-
-                            sheets_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
-                            st.markdown(f"📊 [**Ver en Google Sheets**]({sheets_url})")
-
-                            st.balloons()
-
-                            if st.button("🔄 Recargar para ver datos actualizados"):
-                                st.rerun()
-
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+            if st.button("🔄 Recargar para ver datos actualizados"):
+                st.rerun()
 
             return  # Terminar después de procesar nuevos
 
@@ -441,67 +462,79 @@ def main():
         # Procesar si se clickeó el botón
         if procesar_clicked and archivos_filtrados:
             st.markdown("---")
-            st.subheader("⚙️ Procesando archivos...")
+            st.subheader("⚙️ Procesando y guardando (uno por uno para ahorrar memoria)...")
 
-            all_dfs = []
             progress_bar = st.progress(0)
             status_text = st.empty()
+            results_container = st.container()
+
+            all_results = {}
+            exitos = 0
+            errores = 0
 
             for i, file_info in enumerate(archivos_filtrados):
                 file_path = file_info['path']
-                status_text.text(f"Procesando: {file_info['nombre'] or file_info['comitente']} ({file_info['fecha']})")
-                df = process_local_file(file_path)
-                if not df.empty:
-                    all_dfs.append(df)
+                nombre_display = file_info['nombre'] or file_info['comitente'] or 'Desconocido'
+                status_text.text(f"Procesando: {nombre_display} ({file_info['fecha']})")
+
+                try:
+                    # Procesar archivo
+                    df = process_local_file(file_path)
+
+                    if not df.empty:
+                        # Guardar inmediatamente (no acumular en memoria)
+                        result = save_to_sheets(df, auto_save=True)
+                        all_results.update(result)
+
+                        # Contar resultados
+                        for comitente, res in result.items():
+                            if 'error' not in res:
+                                exitos += 1
+                                var = res.get('variacion_pct', 'N/A')
+                                with results_container:
+                                    st.caption(f"✅ {nombre_display}: {var}")
+                            else:
+                                errores += 1
+                                with results_container:
+                                    st.caption(f"❌ {nombre_display}: {res['error']}")
+
+                        # Liberar memoria
+                        del df
+                        del result
+                    else:
+                        errores += 1
+                        with results_container:
+                            st.caption(f"⚠️ {nombre_display}: archivo vacío")
+
+                except Exception as e:
+                    errores += 1
+                    with results_container:
+                        st.caption(f"❌ {nombre_display}: {str(e)}")
+
+                # Forzar liberación de memoria
+                gc.collect()
                 progress_bar.progress((i + 1) / len(archivos_filtrados))
 
             status_text.empty()
             progress_bar.empty()
 
-            if all_dfs:
-                df_master = pd.concat(all_dfs, ignore_index=True)
+            # Resumen final
+            st.markdown("---")
+            if exitos > 0:
+                st.success(f"✅ **{exitos} carteras actualizadas correctamente**")
+            if errores > 0:
+                st.warning(f"⚠️ {errores} archivos con errores o vacíos")
 
-                # Guardar en Google Sheets
-                st.subheader("💾 Guardando en Google Sheets...")
+            # Link a Google Sheets
+            sheets_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+            st.markdown(f"📊 [**Ver en Google Sheets**]({sheets_url})")
 
-                with st.spinner("Guardando snapshots..."):
-                    try:
-                        results = save_to_sheets(df_master, auto_save=True)
+            if exitos > 0:
+                st.balloons()
 
-                        if results:
-                            exitos = sum(1 for r in results.values() if 'error' not in r)
-                            errores = len(results) - exitos
-
-                            if errores == 0:
-                                st.success(f"✅ **{exitos} carteras actualizadas correctamente**")
-                            else:
-                                st.warning(f"⚠️ {exitos} éxitos, {errores} errores")
-
-                            # Mostrar resumen
-                            with st.expander("Ver detalles", expanded=True):
-                                for comitente, result in results.items():
-                                    nombre = KNOWN_PORTFOLIOS.get(comitente, {}).get('nombre', comitente)
-                                    if 'error' in result:
-                                        st.error(f"❌ {nombre}: {result['error']}")
-                                    else:
-                                        var = result.get('variacion_pct', 'N/A')
-                                        st.success(f"✅ {nombre} - Variación: {var}")
-
-                            # Link a Google Sheets
-                            sheets_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
-                            st.markdown(f"📊 [**Ver en Google Sheets**]({sheets_url})")
-
-                            # Botón para recargar
-                            if st.button("🔄 Recargar página"):
-                                st.rerun()
-                        else:
-                            st.warning("No se guardaron datos. Verificá el formato de los archivos.")
-
-                    except Exception as e:
-                        st.error(f"Error guardando: {e}")
-                        st.exception(e)
-            else:
-                st.error("No se pudieron procesar los archivos.")
+            # Botón para recargar
+            if st.button("🔄 Recargar página"):
+                st.rerun()
 
             return  # Terminar aquí después de procesar
 
