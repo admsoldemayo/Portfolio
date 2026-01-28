@@ -78,6 +78,18 @@ def clear_all_cache():
     cached_get_custom_ticker_mappings.clear()
     cached_get_custom_profiles.clear()
 
+
+def clear_allocation_widgets(comitente: str):
+    """Limpia los widgets de alocación del session state para forzar recarga de valores."""
+    from config import CATEGORIES
+    keys_to_delete = []
+    for cat in CATEGORIES:
+        key = f"custom_alloc_{comitente}_{cat}"
+        if key in st.session_state:
+            keys_to_delete.append(key)
+    for key in keys_to_delete:
+        del st.session_state[key]
+
 # =============================================================================
 # FUNCIONES
 # =============================================================================
@@ -917,6 +929,7 @@ with profile_col2:
         try:
             sheets.set_custom_allocation_batch(selected_comitente, full_allocation)
             cached_get_target_allocation.clear()
+            clear_allocation_widgets(selected_comitente)  # Limpiar widgets para que tomen nuevos valores
             profile_display = profile_name if selected_profile.startswith("custom:") else selected_profile.title()
             st.success(f"✅ Perfil '{profile_display}' cargado")
             st.rerun()
