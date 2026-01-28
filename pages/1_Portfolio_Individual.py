@@ -991,6 +991,7 @@ with col3:
                 # Limpiar cache de alocación Y historial para actualizar análisis
                 cached_get_target_allocation.clear()
                 cached_get_historial_tenencias.clear()
+                clear_allocation_widgets(selected_comitente)  # Forzar recarga de widgets
                 st.rerun()  # Recargar para ver cambios
             except Exception as e:
                 st.error(f"Error guardando alocación: {e}")
