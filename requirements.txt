@@ -7,8 +7,11 @@ openpyxl>=3.1.0      # Para leer .xlsx
 xlrd>=2.0.0          # Para leer .xls legacy
 
 # Web Dashboard
-streamlit>=1.28.0
+streamlit>=1.42.0
 plotly>=5.18.0
+
+# Auth (required for st.login OIDC)
+Authlib>=1.3.2
 
 # Google Sheets Integration
 google-auth>=2.23.0

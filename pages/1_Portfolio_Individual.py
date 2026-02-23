@@ -11,8 +11,12 @@ import plotly.graph_objects as go
 from pathlib import Path
 import sys
 
-# Agregar src al path
+# Agregar src y root al path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from auth import require_auth
+require_auth()
 
 from config import KNOWN_PORTFOLIOS, CATEGORY_COLORS, CATEGORIES, SECTORS, SECTOR_COLORS
 from sheets_manager import get_sheets_manager, reset_sheets_manager

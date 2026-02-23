@@ -17,6 +17,8 @@ import tempfile
 import os
 import gc  # Para liberar memoria
 
+from auth import require_auth
+
 # Agregar src al path para importar módulos
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
@@ -56,6 +58,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Auth gate
+require_auth()
+
+# Logout button in sidebar
+with st.sidebar:
+    if st.button("Cerrar sesion"):
+        st.logout()
 
 # Colores por categoría para gráficos
 CATEGORY_COLORS = {
