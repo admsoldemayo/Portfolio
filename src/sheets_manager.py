@@ -7,6 +7,7 @@ Maneja la conexión y operaciones CRUD con Google Sheets.
 import os
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -57,6 +58,10 @@ class SheetsManager:
         self.sheets_service = None
         self.drive_service = None
         self.spreadsheet_id = SPREADSHEET_ID  # Usar ID desde config
+        # Rate limiting para writes a Google Sheets (límite: 60 req/min)
+        self._last_write_time = 0
+        self._write_delay = 1.0  # segundos mínimos entre writes
+        self._retry_log = []  # registro de reintentos por rate limit
         self._authenticate()
 
     def _authenticate(self):
@@ -160,6 +165,77 @@ class SheetsManager:
 
         logger.info("Autenticación con Google exitosa")
 
+    def _throttled_execute(self, request, operation_name="write"):
+        """
+        Ejecuta un request a la API de Sheets con rate limiting y retry.
+
+        - Espera mínimo 1s entre writes para no exceder 60 req/min
+        - En caso de 429 (rate limit), reintenta hasta 3 veces con backoff exponencial
+        - Registra reintentos en self._retry_log
+
+        Args:
+            request: Objeto request de la API de Google Sheets (pre-.execute())
+            operation_name: Nombre descriptivo para logging
+
+        Returns:
+            Resultado de request.execute()
+
+        Raises:
+            HttpError: Si falla después de todos los reintentos
+        """
+        # Rate limiting: asegurar mínimo self._write_delay entre writes
+        elapsed = time.time() - self._last_write_time
+        if elapsed < self._write_delay:
+            time.sleep(self._write_delay - elapsed)
+
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                result = request.execute()
+                self._last_write_time = time.time()
+                if attempt > 0:
+                    self._retry_log.append({
+                        'operation': operation_name,
+                        'attempts': attempt + 1,
+                        'status': 'success'
+                    })
+                    logger.info(
+                        f"  Retry exitoso para '{operation_name}' "
+                        f"(intento {attempt + 1})"
+                    )
+                return result
+            except HttpError as e:
+                if e.resp.status == 429 and attempt < max_retries:
+                    wait_time = 5 * (2 ** attempt)  # 5s, 10s, 20s
+                    logger.warning(
+                        f"  Rate limit (429) en '{operation_name}'. "
+                        f"Reintentando en {wait_time}s "
+                        f"(intento {attempt + 1}/{max_retries})..."
+                    )
+                    time.sleep(wait_time)
+                    self._last_write_time = time.time()
+                else:
+                    if e.resp.status == 429:
+                        self._retry_log.append({
+                            'operation': operation_name,
+                            'attempts': max_retries + 1,
+                            'status': 'failed',
+                            'error': str(e)
+                        })
+                        logger.error(
+                            f"  Rate limit DEFINITIVO en '{operation_name}' "
+                            f"tras {max_retries + 1} intentos"
+                        )
+                    raise
+
+    def get_retry_log(self) -> List[Dict]:
+        """Retorna el registro de reintentos por rate limit."""
+        return list(self._retry_log)
+
+    def clear_retry_log(self):
+        """Limpia el registro de reintentos."""
+        self._retry_log = []
+
     def get_or_create_spreadsheet(self) -> str:
         """Obtiene o crea el spreadsheet principal."""
         # Buscar spreadsheet existente
@@ -246,29 +322,31 @@ class SheetsManager:
         logger.info("Datos iniciales creados en spreadsheet")
 
     def _write_range(self, sheet: str, range_start: str, values: List[List]):
-        """Escribe valores en un rango."""
+        """Escribe valores en un rango (con rate limiting y retry)."""
         range_name = f"{sheet}!{range_start}"
         body = {'values': values}
 
-        self.sheets_service.spreadsheets().values().update(
+        request = self.sheets_service.spreadsheets().values().update(
             spreadsheetId=self.spreadsheet_id,
             range=range_name,
             valueInputOption='USER_ENTERED',
             body=body
-        ).execute()
+        )
+        self._throttled_execute(request, f"write_range({sheet})")
 
     def _append_rows(self, sheet: str, values: List[List]):
-        """Agrega filas al final de una hoja."""
+        """Agrega filas al final de una hoja (con rate limiting y retry)."""
         range_name = f"{sheet}!A:Z"
         body = {'values': values}
 
-        self.sheets_service.spreadsheets().values().append(
+        request = self.sheets_service.spreadsheets().values().append(
             spreadsheetId=self.spreadsheet_id,
             range=range_name,
             valueInputOption='USER_ENTERED',
             insertDataOption='INSERT_ROWS',
             body=body
-        ).execute()
+        )
+        self._throttled_execute(request, f"append_rows({sheet})")
 
     def _read_all(self, sheet: str) -> List[Dict]:
         """Lee todos los datos de una hoja como lista de diccionarios."""
@@ -439,6 +517,8 @@ class SheetsManager:
                       categoria_data: List[Dict], valor_total: float):
         """
         Guarda un snapshot de la cartera.
+        Si ya existe un snapshot para la misma fecha+comitente, lo reemplaza
+        (evita duplicación al reprocesar).
 
         Args:
             fecha: Fecha del snapshot (YYYY-MM-DD)
@@ -447,6 +527,9 @@ class SheetsManager:
             categoria_data: Lista de {categoria, valor, pct}
             valor_total: Valor total de la cartera
         """
+        # Deduplicación: borrar datos previos para esta fecha+comitente
+        self._delete_snapshot_for_date(fecha, comitente)
+
         # Guardar detalle por categoría
         historial_rows = []
         for cat in categoria_data:
@@ -485,6 +568,107 @@ class SheetsManager:
         ]])
 
         logger.info(f"Snapshot guardado: {comitente} - {fecha} - ${valor_total:,.2f}")
+
+    def _date_matches(self, stored_fecha: str, target_fecha: str) -> bool:
+        """
+        Compara una fecha almacenada en Sheets con una fecha objetivo YYYY-MM-DD.
+        Sheets puede almacenar la fecha como serial number (ej: 46071)
+        o como string (ej: '2026-02-19').
+        """
+        stored = str(stored_fecha).strip()
+        target = str(target_fecha).strip()
+
+        # Comparación directa
+        if stored == target:
+            return True
+
+        # Intentar convertir serial number de Sheets a fecha
+        try:
+            serial = float(stored)
+            date = pd.to_datetime(serial, origin='1899-12-30', unit='D')
+            return date.strftime('%Y-%m-%d') == target
+        except (ValueError, TypeError):
+            return False
+
+    def _read_columns_lightweight(self, sheet: str, columns: str) -> List[List]:
+        """
+        Lee solo columnas específicas de un sheet (ej: 'A:B').
+        Mucho más liviano en memoria que _read_all que lee A:Z.
+        """
+        result = self.sheets_service.spreadsheets().values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{sheet}!{columns}"
+        ).execute()
+        return result.get('values', [])
+
+    def _delete_snapshot_for_date(self, fecha: str, comitente: str):
+        """
+        Elimina snapshots existentes para una fecha+comitente específicos.
+        Borra de SHEET_HISTORIAL y SHEET_SNAPSHOTS para evitar duplicación.
+        Usa lectura liviana (solo columnas A:B) para no consumir memoria.
+        """
+        comitente_str = str(comitente).strip()
+        fecha_str = str(fecha).strip()
+
+        # 1. Limpiar historial_tenencias (columnas: A=fecha, B=comitente)
+        try:
+            rows = self._read_columns_lightweight(SHEET_HISTORIAL, 'A:B')
+            if len(rows) > 1:  # tiene header + datos
+                ranges_to_clear = []
+                for i, row in enumerate(rows[1:], start=2):  # skip header, base 1
+                    if len(row) < 2:
+                        continue
+                    row_fecha = str(row[0]).strip()
+                    row_comitente = str(row[1]).strip()
+                    if row_comitente == comitente_str and self._date_matches(row_fecha, fecha_str):
+                        ranges_to_clear.append(
+                            f"{SHEET_HISTORIAL}!A{i}:G{i}"
+                        )
+
+                if ranges_to_clear:
+                    logger.info(
+                        f"Dedup: borrando {len(ranges_to_clear)} filas de "
+                        f"historial para {comitente} fecha {fecha}"
+                    )
+                    request = self.sheets_service.spreadsheets().values().batchClear(
+                        spreadsheetId=self.spreadsheet_id,
+                        body={'ranges': ranges_to_clear}
+                    )
+                    self._throttled_execute(
+                        request, f"dedup_historial({comitente})"
+                    )
+        except HttpError as e:
+            logger.warning(f"Error limpiando historial duplicado: {e}")
+
+        # 2. Limpiar snapshots_totales (columnas: A=fecha, B=comitente)
+        try:
+            rows = self._read_columns_lightweight(SHEET_SNAPSHOTS, 'A:B')
+            if len(rows) > 1:
+                ranges_to_clear = []
+                for i, row in enumerate(rows[1:], start=2):
+                    if len(row) < 2:
+                        continue
+                    row_fecha = str(row[0]).strip()
+                    row_comitente = str(row[1]).strip()
+                    if row_comitente == comitente_str and self._date_matches(row_fecha, fecha_str):
+                        ranges_to_clear.append(
+                            f"{SHEET_SNAPSHOTS}!A{i}:F{i}"
+                        )
+
+                if ranges_to_clear:
+                    logger.info(
+                        f"Dedup: borrando {len(ranges_to_clear)} filas de "
+                        f"snapshots para {comitente} fecha {fecha}"
+                    )
+                    request = self.sheets_service.spreadsheets().values().batchClear(
+                        spreadsheetId=self.spreadsheet_id,
+                        body={'ranges': ranges_to_clear}
+                    )
+                    self._throttled_execute(
+                        request, f"dedup_snapshots({comitente})"
+                    )
+        except HttpError as e:
+            logger.warning(f"Error limpiando snapshots duplicados: {e}")
 
     def get_last_snapshot(self, comitente: str) -> Optional[Dict]:
         """Obtiene el último snapshot de una cartera."""
@@ -749,33 +933,39 @@ class SheetsManager:
             return False
 
     def _delete_detalle_activos(self, comitente: str):
-        """Elimina los activos anteriores de un comitente."""
+        """Elimina los activos anteriores de un comitente (batch clear)."""
         try:
-            data = self._read_all(SHEET_DETALLE_ACTIVOS)
-            if not data:
+            # Leer solo columna B (comitente) - mucho más liviano que _read_all
+            rows = self._read_columns_lightweight(SHEET_DETALLE_ACTIVOS, 'B:B')
+            if len(rows) <= 1:
                 return
 
-            # Encontrar filas a eliminar (de abajo hacia arriba para no desplazar índices)
+            # Encontrar filas a eliminar
             comitente_str = str(comitente).strip()
-            rows_to_delete = []
-            for i, row in enumerate(data):
-                row_comitente = str(row.get('comitente', '')).strip()
-                if row_comitente == comitente_str:
-                    rows_to_delete.append(i + 2)  # +2 por header y base 1
+            ranges_to_clear = []
+            for i, row in enumerate(rows[1:], start=2):  # skip header, base 1
+                if row and str(row[0]).strip() == comitente_str:
+                    ranges_to_clear.append(
+                        f"{SHEET_DETALLE_ACTIVOS}!A{i}:L{i}"
+                    )
 
-            if not rows_to_delete:
+            if not ranges_to_clear:
                 logger.info(f"No hay filas previas para eliminar de {comitente}")
                 return
 
-            logger.info(f"Eliminando {len(rows_to_delete)} filas de detalle_activos para {comitente}")
+            logger.info(
+                f"Eliminando {len(ranges_to_clear)} filas de "
+                f"detalle_activos para {comitente} (batch clear)"
+            )
 
-            # Limpiar filas (de abajo hacia arriba) - usar rango completo hasta columna L (12 cols)
-            for row_num in reversed(rows_to_delete):
-                range_name = f"{SHEET_DETALLE_ACTIVOS}!A{row_num}:L{row_num}"
-                self.sheets_service.spreadsheets().values().clear(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=range_name
-                ).execute()
+            # Batch clear: 1 sola llamada API en vez de N individuales
+            request = self.sheets_service.spreadsheets().values().batchClear(
+                spreadsheetId=self.spreadsheet_id,
+                body={'ranges': ranges_to_clear}
+            )
+            self._throttled_execute(
+                request, f"batch_clear_detalle({comitente})"
+            )
 
         except HttpError as e:
             logger.warning(f"Error eliminando activos anteriores: {e}")

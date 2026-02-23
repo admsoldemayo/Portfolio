@@ -544,7 +544,7 @@ def generate_summary(df: pd.DataFrame) -> str:
 
 def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
     """
-    Guarda snapshots de carteras en Google Sheets.
+    Guarda snapshots de carteras en Google Sheets con rate limiting y retry.
 
     Args:
         df: DataFrame con datos procesados (debe tener columnas:
@@ -552,7 +552,10 @@ def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
         auto_save: Si es True, guarda automáticamente. Si es False, solo retorna info.
 
     Returns:
-        Dict con resultados del guardado por comitente
+        Dict con resultados del guardado por comitente, incluyendo:
+        - 'retries': lista de operaciones que necesitaron reintento
+        - 'failed': True si falló definitivamente
+        - 'error': mensaje de error si falló
     """
     from sheets_manager import get_sheets_manager
 
@@ -571,12 +574,13 @@ def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
     sheets = get_sheets_manager()
     results = {}
 
-    # Agrupar por comitente
-    for comitente in df['comitente'].unique():
-        if pd.isna(comitente) or comitente == '':
-            logger.warning("Encontrado comitente vacío, omitiendo...")
-            continue
+    comitentes = [c for c in df['comitente'].unique() if pd.notna(c) and c != '']
+    total_carteras = len(comitentes)
 
+    logger.info(f"Procesando {total_carteras} carteras con rate limiting (1s entre writes)")
+
+    # Agrupar por comitente
+    for idx, comitente in enumerate(comitentes, 1):
         df_comitente = df[df['comitente'] == comitente]
 
         # Obtener metadata
@@ -594,11 +598,14 @@ def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
         # Log info
         valor_total = df_comitente['valor'].sum()
         logger.info(
-            f"Preparando snapshot: {comitente} ({nombre}) - "
-            f"${valor_total:,.0f} - {fecha} - TC MEP: {tc_mep}"
+            f"[{idx}/{total_carteras}] {comitente} ({nombre}) - "
+            f"${valor_total:,.0f} - {fecha}"
         )
 
         if auto_save:
+            # Limpiar log de reintentos antes de cada cartera
+            sheets.clear_retry_log()
+
             try:
                 # Guardar snapshot agregado (por categoría)
                 result = tracker.save_snapshot(
@@ -633,21 +640,40 @@ def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
                     tc_ccl=float(tc_ccl) if tc_ccl else 0
                 )
 
+                # Recopilar info de reintentos para esta cartera
+                retry_log = sheets.get_retry_log()
+                retries = [r for r in retry_log if r['status'] == 'success']
+                failures = [r for r in retry_log if r['status'] == 'failed']
+
+                result['retries'] = retries
+                result['failed'] = False
+
+                if retries:
+                    logger.info(
+                        f"  -> OK con {len(retries)} reintentos: "
+                        f"{', '.join(r['operation'] for r in retries)}"
+                    )
+                else:
+                    logger.info(
+                        f"  -> OK ({len(activos)} activos)"
+                    )
+
                 results[comitente] = result
-                logger.info(f"  -> Guardado exitoso para {comitente} ({len(activos)} activos)")
-                # Liberar memoria
-                del activos
-                import gc
-                gc.collect()
-                # Rate limiting: esperar 3 segundos entre carteras para no exceder 60 writes/min
-                time.sleep(3)
+
             except Exception as e:
-                logger.error(f"  -> Error guardando {comitente}: {e}")
-                results[comitente] = {'error': str(e)}
-                # Si hay error de rate limit, esperar más
-                if '429' in str(e) or 'RATE_LIMIT' in str(e):
-                    logger.info("  -> Esperando 60 segundos por rate limit...")
-                    time.sleep(60)
+                logger.error(f"  -> ERROR DEFINITIVO para {comitente}: {e}")
+                retry_log = sheets.get_retry_log()
+                results[comitente] = {
+                    'error': str(e),
+                    'failed': True,
+                    'retries': [r for r in retry_log if r['status'] == 'success'],
+                    'nombre': nombre,
+                }
+
+                # Si fue rate limit, esperar antes de la siguiente cartera
+                if '429' in str(e) or 'RATE_LIMIT' in str(e).upper():
+                    logger.info("  -> Esperando 30s antes de continuar...")
+                    time.sleep(30)
         else:
             results[comitente] = {
                 'nombre': nombre,
@@ -656,7 +682,49 @@ def save_to_sheets(df: pd.DataFrame, auto_save: bool = True) -> dict:
                 'dry_run': True
             }
 
+    # Resumen final de rate limiting
+    _log_rate_limit_summary(results)
+
     return results
+
+
+def _log_rate_limit_summary(results: dict):
+    """Imprime resumen de rate limiting: reintentos y fallos."""
+    retried = []
+    failed = []
+    ok = []
+
+    for comitente, result in results.items():
+        if result.get('dry_run'):
+            continue
+        if result.get('failed'):
+            failed.append((comitente, result.get('nombre', ''), result.get('error', '')))
+        elif result.get('retries'):
+            retried.append((comitente, result.get('nombre', ''), len(result['retries'])))
+        else:
+            ok.append(comitente)
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("RESUMEN RATE LIMITING")
+    logger.info("=" * 60)
+    logger.info(f"  OK sin reintentos:  {len(ok)}")
+    logger.info(f"  OK con reintentos:  {len(retried)}")
+    logger.info(f"  FALLIDOS:           {len(failed)}")
+
+    if retried:
+        logger.info("")
+        logger.info("  Carteras con reintentos:")
+        for com, nombre, count in retried:
+            logger.info(f"    - {com} ({nombre}): {count} reintentos")
+
+    if failed:
+        logger.info("")
+        logger.info("  Carteras FALLIDAS:")
+        for com, nombre, error in failed:
+            logger.info(f"    - {com} ({nombre}): {error[:80]}")
+
+    logger.info("=" * 60)
 
 
 def run_pipeline(specific_file: str = None, save_to_gsheets: bool = True):
