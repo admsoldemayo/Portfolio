@@ -210,8 +210,9 @@ def parse_iol_stonex_format(filepath: str) -> pd.DataFrame:
         # Precio en columna 6
         precio = clean_numeric(row.iloc[6]) if pd.notna(row.iloc[6]) else 0
 
-        # Calcular valor = cantidad * precio
-        valor = cantidad * precio
+        # Preferir Monto $ (col 7) si disponible, sino calcular
+        monto_col = row.iloc[7] if len(row) > 7 and pd.notna(row.iloc[7]) else None
+        valor = clean_numeric(monto_col) if monto_col is not None else cantidad * precio
 
         all_rows.append({
             'ticker': ticker.upper(),
