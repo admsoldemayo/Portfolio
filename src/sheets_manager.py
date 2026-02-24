@@ -407,6 +407,39 @@ class SheetsManager:
                 allocation[cat] = pct
         return allocation
 
+    def update_profile_allocation(self, perfil: str, allocations: Dict[str, float]) -> bool:
+        """Actualiza la alocación de un perfil base en perfiles_alocacion."""
+        data = self._read_all(SHEET_PERFILES)
+
+        # Mantener filas de otros perfiles
+        other_rows = []
+        for row in data:
+            if row.get('perfil') != perfil:
+                other_rows.append([row.get('perfil', ''), row.get('categoria', ''), row.get('objetivo_pct', 0)])
+
+        # Crear nuevas filas para este perfil
+        new_rows = [[perfil, cat, pct] for cat, pct in allocations.items() if pct > 0]
+
+        # Reescribir hoja: header + otros perfiles + nuevas filas
+        header = [['perfil', 'categoria', 'objetivo_pct']]
+        all_data = header + other_rows + new_rows
+
+        self.sheets_service.spreadsheets().values().clear(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{SHEET_PERFILES}!A:C"
+        ).execute()
+
+        if all_data:
+            self.sheets_service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{SHEET_PERFILES}!A1",
+                valueInputOption='USER_ENTERED',
+                body={'values': all_data}
+            ).execute()
+
+        logger.info(f"Perfil '{perfil}' actualizado con {len(new_rows)} categorías")
+        return True
+
     def get_custom_allocation(self, comitente: str) -> Dict[str, float]:
         """Obtiene overrides de alocación para un cliente específico."""
         data = self._read_all(SHEET_CUSTOM)
@@ -456,6 +489,11 @@ class SheetsManager:
 
         # Si no existe, agregar nueva fila
         self._append_rows(SHEET_CUSTOM, [[comitente, categoria, objetivo_pct]])
+
+    def update_custom_allocation(self, comitente: str, categoria: str, porcentaje: float) -> bool:
+        """Alias para set_custom_allocation, usado por la página de Configuración."""
+        self.set_custom_allocation(comitente, categoria, porcentaje)
+        return True
 
     def set_custom_allocation_batch(self, comitente: str, allocations: Dict[str, float]):
         """
