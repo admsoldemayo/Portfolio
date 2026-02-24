@@ -595,13 +595,25 @@ def main():
         df_portfolios = tracker.get_all_portfolios_summary()
 
         if not df_portfolios.empty:
+            # Filtrar carteras fantasma (comitente o nombre vacío)
+            df_portfolios = df_portfolios[
+                df_portfolios['comitente'].astype(str).str.strip().astype(bool) &
+                df_portfolios['nombre'].astype(str).str.strip().astype(bool)
+            ]
+
             # Obtener TC guardado desde los archivos procesados
             sheets = get_sheets_manager()
             all_tc = sheets.get_all_tc()
 
-            # Calcular TC promedio de los archivos
+            # Usar la moda del TC MEP (el más frecuente) en vez del promedio,
+            # para ignorar TCs de fechas viejas que puedan quedar en el sheet
             tc_values = [tc['tc_mep'] for tc in all_tc.values() if tc['tc_mep'] > 0]
-            tc_default = sum(tc_values) / len(tc_values) if tc_values else 1150.0
+            if tc_values:
+                from collections import Counter
+                tc_counter = Counter(tc_values)
+                tc_default = tc_counter.most_common(1)[0][0]
+            else:
+                tc_default = 1150.0
 
             # Configuración: Tipo de cambio y filtros
             st.markdown("#### ⚙️ Configuración")

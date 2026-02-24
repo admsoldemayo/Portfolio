@@ -1040,7 +1040,8 @@ class SheetsManager:
 
     def get_all_tc(self) -> Dict[str, Dict[str, float]]:
         """
-        Obtiene el TC de todos los comitentes.
+        Obtiene el TC de todos los comitentes, usando la fecha más reciente
+        disponible para cada uno.
 
         Returns:
             Dict {comitente: {'tc_mep': x, 'tc_ccl': y}}
@@ -1050,16 +1051,28 @@ class SheetsManager:
             if not data:
                 return {}
 
+            # Agrupar por comitente, quedarse con la fecha más reciente
             result = {}
             for row in data:
-                comitente = row.get('comitente')
-                if comitente and comitente not in result:
-                    tc_mep = float(row.get('tc_mep', 0) or 0)
-                    tc_ccl = float(row.get('tc_ccl', 0) or 0)
+                comitente = row.get('comitente', '').strip()
+                if not comitente:
+                    continue
+
+                fecha = row.get('fecha', '')
+                tc_mep = float(row.get('tc_mep', 0) or 0)
+                tc_ccl = float(row.get('tc_ccl', 0) or 0)
+
+                # Solo actualizar si esta fecha es más reciente o si es primera vez
+                if comitente not in result or fecha > result[comitente]['_fecha']:
                     result[comitente] = {
                         'tc_mep': tc_mep if tc_mep > 0 else 1150.0,
-                        'tc_ccl': tc_ccl if tc_ccl > 0 else 1150.0
+                        'tc_ccl': tc_ccl if tc_ccl > 0 else 1150.0,
+                        '_fecha': fecha,
                     }
+
+            # Limpiar campo auxiliar _fecha
+            for comitente in result:
+                del result[comitente]['_fecha']
 
             return result
 
