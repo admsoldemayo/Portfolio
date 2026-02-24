@@ -207,6 +207,9 @@ def parse_iol_stonex_format(filepath: str) -> pd.DataFrame:
         disponibles = row.iloc[4] if pd.notna(row.iloc[4]) else row.iloc[3]
         cantidad = clean_numeric(disponibles)
 
+        # Moneda en columna 5
+        moneda = str(row.iloc[5]).strip().upper() if pd.notna(row.iloc[5]) else "ARS"
+
         # Precio en columna 6
         precio = clean_numeric(row.iloc[6]) if pd.notna(row.iloc[6]) else 0
 
@@ -214,11 +217,21 @@ def parse_iol_stonex_format(filepath: str) -> pd.DataFrame:
         monto_col = row.iloc[7] if len(row) > 7 and pd.notna(row.iloc[7]) else None
         valor = clean_numeric(monto_col) if monto_col is not None else cantidad * precio
 
+        # Si el valor está en USD y no vino de Monto $ (que ya está en ARS),
+        # convertir a ARS multiplicando por TC correspondiente
+        # USDC = "USD Cable/CCL", USD.C = "USD Contado" (MEP)
+        if monto_col is None and moneda not in ("ARS", ""):
+            if "CCL" in moneda or moneda == "USDC":
+                valor = valor * tc_ccl
+            else:
+                valor = valor * tc_mep
+
         all_rows.append({
             'ticker': ticker.upper(),
             'descripcion': nombre,
             'cantidad': cantidad,
             'precio': precio,
+            'moneda': moneda,
             'valor': valor,
             'seccion_broker': current_section,
             'tc_mep': tc_mep,
