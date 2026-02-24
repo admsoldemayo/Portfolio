@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import require_auth
 require_auth()
 
+from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK
+inject_css()
+
 from config import KNOWN_PORTFOLIOS, CATEGORY_COLORS
 from portfolio_tracker import PortfolioTracker
 
@@ -72,21 +75,21 @@ def create_evolution_chart(df: pd.DataFrame, title: str) -> go.Figure:
         y=df['valor_total'],
         mode='lines+markers',
         name='Valor Total',
-        line=dict(color='#3366CC', width=3),
-        marker=dict(size=8),
+        line=dict(color='#C9A54E', width=3, shape='spline'),
+        marker=dict(size=7, color='#C9A54E', line=dict(width=2, color='#0E1117')),
         fill='tozeroy',
-        fillcolor='rgba(51, 102, 204, 0.2)'
+        fillcolor='rgba(201, 165, 78, 0.08)',
+        hovertemplate='<b>%{x}</b><br>Valor: $%{y:,.0f}<extra></extra>',
     ))
 
+    apply_plotly_theme(fig)
     fig.update_layout(
         title=title,
         xaxis_title='Fecha',
         yaxis_title='Valor Total ($)',
         height=500,
-        hovermode='x unified'
+        hovermode='x unified',
     )
-
-    # Formato del eje Y
     fig.update_yaxis(tickformat=',')
 
     return fig
@@ -110,23 +113,24 @@ def create_returns_chart(returns: dict) -> go.Figure:
 
     df_returns = df_returns.sort_values('return_pct', ascending=True)
 
-    # Colorear según positivo/negativo
-    colors = ['green' if x >= 0 else 'red' for x in df_returns['return_pct']]
+    colors = ['#10B981' if x >= 0 else '#EF4444' for x in df_returns['return_pct']]
 
     fig = go.Figure(go.Bar(
         x=df_returns['return_pct'],
         y=df_returns['categoria'],
         orientation='h',
         marker_color=colors,
+        marker_line=dict(width=0),
         text=df_returns['return_pct'].apply(lambda x: f"{x:+.1f}%"),
-        textposition='outside'
+        textposition='outside',
+        textfont=dict(color='#8B95A5', size=11),
     ))
 
+    apply_plotly_theme(fig)
     fig.update_layout(
-        title='Rentabilidad por Categoría',
+        title='Rentabilidad por Categoria',
         xaxis_title='Rentabilidad (%)',
-        yaxis_title='Categoría',
-        height=400
+        height=400,
     )
 
     return fig
@@ -136,8 +140,7 @@ def create_returns_chart(returns: dict) -> go.Figure:
 # INTERFAZ PRINCIPAL
 # =============================================================================
 
-st.title("📈 Historial de Carteras")
-st.markdown("*Evolución temporal y análisis de rentabilidad*")
+page_header("Historial de Carteras", "Evolucion temporal y analisis de rentabilidad")
 
 # Inicializar tracker
 tracker = PortfolioTracker()
@@ -235,9 +238,11 @@ if selected_comitente == "ALL":
                 df_summary,
                 values='valor_total',
                 names='nombre',
-                title='Distribución del Patrimonio Total',
-                hole=0.4
+                title='Distribucion del Patrimonio Total',
+                hole=0.45,
+                color_discrete_sequence=CHART_COLORS,
             )
+            styled_pie_chart(fig_clients)
             st.plotly_chart(fig_clients, use_container_width=True)
 
     except Exception as e:

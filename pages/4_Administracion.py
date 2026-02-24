@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import require_auth
 require_auth()
 
+from style import inject_css, page_header, footer_text
+inject_css()
+
 from config import KNOWN_PORTFOLIOS, DEFAULT_PROFILES, CATEGORIES, CATEGORY_COLORS
 from sheets_manager import get_sheets_manager, reset_sheets_manager
 from portfolio_tracker import PortfolioTracker
@@ -155,8 +158,7 @@ def get_data_stats():
 # INTERFAZ PRINCIPAL
 # =============================================================================
 
-st.title("🔧 Administración del Sistema")
-st.markdown("*Herramientas para gestionar datos en Google Sheets*")
+page_header("Administracion del Sistema", "Herramientas para gestionar datos en Google Sheets")
 
 # =============================================================================
 # SECCIÓN 1: ESTADO DEL SISTEMA
@@ -553,9 +555,4 @@ with st.expander("Ver contenido de Google Sheets (raw)"):
 # =============================================================================
 
 st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: gray; padding: 20px;'>
-🔧 Panel de Administración - Portfolio Automation System v1.0<br>
-Usa estas herramientas con precaución
-</div>
-""", unsafe_allow_html=True)
+footer_text("Panel de Administracion &middot; Portfolio Automation System v1.0")

@@ -16,6 +16,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import require_auth
 require_auth()
 
+from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, footer_text, CHART_COLORS
+inject_css()
+
 from config import KNOWN_PORTFOLIOS, DEFAULT_PROFILES, CATEGORIES
 from sheets_manager import get_sheets_manager, reset_sheets_manager
 
@@ -126,8 +129,7 @@ def save_custom_allocation(comitente: str, categoria: str, porcentaje: float) ->
 # INTERFAZ PRINCIPAL
 # =============================================================================
 
-st.title("⚙️ Configuración de Alocaciones")
-st.markdown("*Define perfiles de alocación y overrides personalizados por cliente*")
+page_header("Configuracion de Alocaciones", "Define perfiles de alocacion y overrides personalizados por cliente")
 
 # Tabs para organizar contenido
 tab1, tab2, tab3 = st.tabs(["📊 Perfiles Base", "✏️ Overrides Custom", "ℹ️ Información"])
@@ -234,8 +236,10 @@ with tab1:
             values='Porcentaje',
             names='Categoría',
             title=f'Perfil {perfil_seleccionado.title()}',
-            hole=0.4
+            hole=0.45,
+            color_discrete_sequence=CHART_COLORS,
         )
+        styled_pie_chart(fig)
         st.plotly_chart(fig, use_container_width=True)
 
 # =============================================================================
@@ -391,9 +395,4 @@ with tab3:
         st.error(f"❌ Error de conexión: {e}")
 
     st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center; color: gray; padding: 20px;'>
-    Portfolio Automation System v1.0<br>
-    Desarrollado para Sol de Mayo
-    </div>
-    """, unsafe_allow_html=True)
+    footer_text("Portfolio Automation System v1.0 &middot; Sol de Mayo")

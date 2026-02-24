@@ -18,6 +18,7 @@ import os
 import gc  # Para liberar memoria
 
 from auth import require_auth
+from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK
 
 # Agregar src al path para importar módulos
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -62,21 +63,8 @@ st.set_page_config(
 # Auth gate
 require_auth()
 
-# Colores por categoría para gráficos
-CATEGORY_COLORS = {
-    "SPY": "#3366CC",
-    "MERV": "#109618",
-    "BONOS_SOBERANOS_USD": "#1E90FF",
-    "LETRAS": "#FF9900",
-    "GLD": "#FFD700",
-    "SLV": "#C0C0C0",
-    "CRYPTO_BTC": "#F7931A",
-    "CRYPTO_ETH": "#627EEA",
-    "BRASIL": "#009739",
-    "EXTRAS_COBRE": "#B87333",
-    "LIQUIDEZ": "#22AA99",
-    "OTROS": "#999999",
-}
+# Theme
+inject_css()
 
 
 # =============================================================================
@@ -247,8 +235,7 @@ def format_currency(value, show_full=False):
 # =============================================================================
 
 def main():
-    st.title("📊 Portfolio Dashboard - Sol de Mayo")
-    st.markdown("*Sistema de gestión y análisis de carteras de inversión*")
+    page_header("Portfolio Dashboard", "Sistema de gestion y analisis de carteras de inversion")
 
     # Cargar mapeos custom desde Google Sheets al inicio
     try:
@@ -715,10 +702,12 @@ def main():
                     df_portfolios,
                     values='valor_total',
                     names='nombre',
-                    title='Distribución del Patrimonio por Cliente',
-                    hole=0.4
+                    title='Distribucion del Patrimonio por Cliente',
+                    hole=0.45,
+                    color_discrete_sequence=CHART_COLORS,
                 )
                 fig.update_traces(textposition='inside', textinfo='percent+label')
+                styled_pie_chart(fig)
                 st.plotly_chart(fig, use_container_width=True)
 
             with col2:
@@ -732,9 +721,11 @@ def main():
                     y='nombre',
                     title='Valor por Cartera (USD)',
                     orientation='h',
-                    text=df_bar['valor_usd'].apply(lambda x: f"USD {x/1000000:.2f}M")
+                    text=df_bar['valor_usd'].apply(lambda x: f"USD {x/1000000:.2f}M"),
+                    color_discrete_sequence=['#C9A54E'],
                 )
-                fig_bar.update_traces(textposition='outside')
+                fig_bar.update_traces(textposition='outside', textfont=dict(color='#8B95A5'))
+                apply_plotly_theme(fig_bar)
                 fig_bar.update_layout(xaxis_title="Valor (USD)")
                 st.plotly_chart(fig_bar, use_container_width=True)
 

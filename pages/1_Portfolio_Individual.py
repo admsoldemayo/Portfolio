@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import require_auth
 require_auth()
 
+from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK
+inject_css()
+
 from config import KNOWN_PORTFOLIOS, CATEGORY_COLORS, CATEGORIES, SECTORS, SECTOR_COLORS
 from sheets_manager import get_sheets_manager, reset_sheets_manager
 from allocation_manager import AllocationManager
@@ -217,31 +220,33 @@ def create_comparison_chart(comparison_df: pd.DataFrame) -> go.Figure:
     """Crea gráfico de comparación actual vs objetivo."""
     fig = go.Figure()
 
-    # Actual
     fig.add_trace(go.Bar(
         name='Actual',
         x=comparison_df['categoria'],
         y=comparison_df['actual_pct'],
-        marker_color='lightblue',
+        marker_color='#3B82F6',
+        marker_line=dict(width=0),
         hovertemplate='<b>%{x}</b><br>Actual: %{y:.1f}%<extra></extra>'
     ))
 
-    # Objetivo
     fig.add_trace(go.Bar(
         name='Objetivo',
         x=comparison_df['categoria'],
         y=comparison_df['objetivo_pct'],
-        marker_color='orange',
+        marker_color='rgba(201, 165, 78, 0.7)',
+        marker_line=dict(color='#C9A54E', width=1),
         hovertemplate='<b>%{x}</b><br>Objetivo: %{y:.1f}%<extra></extra>'
     ))
 
+    apply_plotly_theme(fig)
     fig.update_layout(
-        title='Alocación: Actual vs Objetivo',
-        xaxis_title='Categoría',
+        title='Alocacion: Actual vs Objetivo',
+        xaxis_title='Categoria',
         yaxis_title='Porcentaje (%)',
         barmode='group',
         height=400,
-        hoverlabel=dict(bgcolor="white", font_size=12)
+        bargap=0.2,
+        bargroupgap=0.1,
     )
 
     return fig
@@ -249,19 +254,16 @@ def create_comparison_chart(comparison_df: pd.DataFrame) -> go.Figure:
 
 def create_status_chart(comparison_df: pd.DataFrame) -> go.Figure:
     """Crea gráfico de desviaciones por categoría."""
-    # Ordenar por desviación absoluta
     df_sorted = comparison_df.sort_values('desviacion', ascending=True)
 
-    # Color según status
     colors = df_sorted['status'].map({
-        'OK': 'green',
-        'SOBRE': 'red',
-        'BAJO': 'orange'
+        'OK': '#10B981',
+        'SOBRE': '#EF4444',
+        'BAJO': '#F59E0B'
     })
 
-    # Crear texto de hover personalizado
     hover_texts = df_sorted.apply(
-        lambda r: f"<b>{r['categoria']}</b><br>Desviación: {r['desviacion']:+.1f}%<br>Estado: {r['status']}",
+        lambda r: f"<b>{r['categoria']}</b><br>Desviacion: {r['desviacion']:+.1f}%<br>Estado: {r['status']}",
         axis=1
     )
 
@@ -270,18 +272,19 @@ def create_status_chart(comparison_df: pd.DataFrame) -> go.Figure:
         y=df_sorted['categoria'],
         orientation='h',
         marker_color=colors,
+        marker_line=dict(width=0),
         text=df_sorted['desviacion'].apply(lambda x: f"{x:+.1f}%"),
         textposition='outside',
+        textfont=dict(color='#8B95A5', size=11),
         hovertext=hover_texts,
         hoverinfo='text'
     ))
 
+    apply_plotly_theme(fig)
     fig.update_layout(
-        title='Desviaciones por Categoría',
-        xaxis_title='Desviación (puntos porcentuales)',
-        yaxis_title='Categoría',
+        title='Desviaciones por Categoria',
+        xaxis_title='Desviacion (puntos porcentuales)',
         height=400,
-        hoverlabel=dict(bgcolor="white", font_size=12)
     )
 
     return fig
@@ -291,8 +294,7 @@ def create_status_chart(comparison_df: pd.DataFrame) -> go.Figure:
 # INTERFAZ PRINCIPAL
 # =============================================================================
 
-st.title("📁 Portfolio Individual")
-st.markdown("*Análisis detallado por cliente: alocación, comparación y sugerencias*")
+page_header("Portfolio Individual", "Analisis detallado por cliente: alocacion, comparacion y sugerencias")
 
 # Selector de cartera
 st.markdown("---")
@@ -552,44 +554,41 @@ if has_data_for_analysis:
         col1, col2 = st.columns(2)
 
         with col1:
-            # Actual
             actual_data = comparison[comparison['actual_pct'] > 0][['categoria', 'actual_pct']].copy()
-            # Calcular valor desde porcentaje
             actual_data['valor'] = (actual_data['actual_pct'] / 100) * valor_total
-            colors_actual = [CATEGORY_COLORS.get(cat, '#999999') for cat in actual_data['categoria']]
+            colors_actual = [CATEGORY_COLORS_DARK.get(cat, '#6B7280') for cat in actual_data['categoria']]
 
             fig_actual = px.pie(
                 actual_data,
                 values='actual_pct',
                 names='categoria',
-                title='Alocación Actual',
-                hole=0.4,
+                title='Alocacion Actual',
+                hole=0.45,
                 color_discrete_sequence=colors_actual
             )
             fig_actual.update_traces(
                 hovertemplate='<b>%{label}</b><br>Porcentaje: %{value:.1f}%<br>Valor: $%{customdata:,.0f}<extra></extra>',
                 customdata=actual_data['valor']
             )
-            fig_actual.update_layout(hoverlabel=dict(bgcolor="white", font_size=12))
+            styled_pie_chart(fig_actual)
             st.plotly_chart(fig_actual, use_container_width=True)
 
         with col2:
-            # Objetivo
             objetivo_data = comparison[comparison['objetivo_pct'] > 0][['categoria', 'objetivo_pct']].copy()
-            colors_objetivo = [CATEGORY_COLORS.get(cat, '#999999') for cat in objetivo_data['categoria']]
+            colors_objetivo = [CATEGORY_COLORS_DARK.get(cat, '#6B7280') for cat in objetivo_data['categoria']]
 
             fig_objetivo = px.pie(
                 objetivo_data,
                 values='objetivo_pct',
                 names='categoria',
-                title='Alocación Objetivo',
-                hole=0.4,
+                title='Alocacion Objetivo',
+                hole=0.45,
                 color_discrete_sequence=colors_objetivo
             )
             fig_objetivo.update_traces(
                 hovertemplate='<b>%{label}</b><br>Objetivo: %{value:.1f}%<extra></extra>'
             )
-            fig_objetivo.update_layout(hoverlabel=dict(bgcolor="white", font_size=12))
+            styled_pie_chart(fig_objetivo)
             st.plotly_chart(fig_objetivo, use_container_width=True)
 
     except Exception as e:
@@ -857,21 +856,21 @@ if not df_activos.empty:
         )
 
     with col2:
-        # Pie chart
-        colors_sector = [SECTOR_COLORS.get(s, '#808080') for s in df_sector_summary['Sector']]
+        colors_sector = [SECTOR_COLORS.get(s, '#6B7280') for s in df_sector_summary['Sector']]
         fig_sector = px.pie(
             df_sector_summary,
             values='Valor',
             names='Sector',
-            title='Distribución por Sector',
+            title='Distribucion por Sector',
             color_discrete_sequence=colors_sector,
-            hole=0.4,
+            hole=0.45,
             custom_data=['%', 'Activos']
         )
         fig_sector.update_traces(
             hovertemplate='<b>%{label}</b><br>Valor: $%{value:,.0f}<br>Porcentaje: %{customdata[0]:.1f}%<br>Activos: %{customdata[1]}<extra></extra>'
         )
-        fig_sector.update_layout(height=350, hoverlabel=dict(bgcolor="white", font_size=12))
+        styled_pie_chart(fig_sector)
+        fig_sector.update_layout(height=350)
         st.plotly_chart(fig_sector, use_container_width=True)
 
 else:
