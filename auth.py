@@ -1,25 +1,25 @@
 """
-Auth Gate - Google OAuth via Streamlit st.login()
-==================================================
-Restricts access to allowed email addresses.
+Auth Gate - Password protection
+================================
+Simple password gate using DASHBOARD_PASSWORD env var.
 """
 
 import streamlit as st
-
-ALLOWED_EMAILS = ["flopez@soldemayosa.com"]
+import os
 
 
 def require_auth():
-    """Block access unless user is logged in with an allowed email."""
-    if not st.user.is_logged_in:
-        st.title("Portfolio Dashboard")
-        st.write("Acceso restringido.")
-        if st.button("Iniciar sesion con Google"):
-            st.login()
-        st.stop()
+    """Block access unless correct password is entered."""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
-    if st.user.email not in ALLOWED_EMAILS:
-        st.error(f"Acceso denegado para {st.user.email}")
-        if st.button("Cerrar sesion"):
-            st.logout()
+    if not st.session_state.authenticated:
+        st.title("Portfolio Dashboard")
+        password = st.text_input("Password", type="password")
+        if st.button("Entrar"):
+            if password == os.environ.get("DASHBOARD_PASSWORD", ""):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Password incorrecta")
         st.stop()

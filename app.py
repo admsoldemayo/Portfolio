@@ -62,11 +62,6 @@ st.set_page_config(
 # Auth gate
 require_auth()
 
-# Logout button in sidebar
-with st.sidebar:
-    if st.button("Cerrar sesion"):
-        st.logout()
-
 # Colores por categoría para gráficos
 CATEGORY_COLORS = {
     "SPY": "#3366CC",

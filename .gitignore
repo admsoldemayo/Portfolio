@@ -1,6 +1,3 @@
-# Streamlit secrets (NUNCA subir)
-.streamlit/secrets.toml
-
 # Credentials y tokens (NUNCA subir)
 credentials.json
 token.json
