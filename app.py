@@ -18,7 +18,10 @@ import os
 import gc  # Para liberar memoria
 
 from auth import require_auth
-from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK
+from style import (
+    inject_css, apply_plotly_theme, styled_pie_chart, page_header,
+    CHART_COLORS, CATEGORY_COLORS_DARK, kpi_row, sidebar_brand, nav_cards,
+)
 
 # Agregar src al path para importar módulos
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -532,28 +535,18 @@ def main():
 
     # Navegación rápida
     st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info("**📁 Portfolio Individual**\nAnaliza carteras por cliente con comparación vs objetivo")
-    with col2:
-        st.info("**📈 Historial**\nVisualiza evolución temporal y rentabilidad")
-    with col3:
-        st.info("**⚙️ Configuración**\nEdita perfiles de alocación y overrides")
+    nav_cards([
+        {"icon": "📁", "title": "Portfolio Individual", "description": "Analiza carteras por cliente con comparacion vs objetivo"},
+        {"icon": "📈", "title": "Historial", "description": "Visualiza evolucion temporal y rentabilidad"},
+        {"icon": "⚙️", "title": "Configuracion", "description": "Edita perfiles de alocacion y overrides"},
+    ])
 
-    # Sidebar - Info y categorías
+    # Sidebar - Brand + Info
     with st.sidebar:
-        st.markdown("### 📊 Categorías de Activos")
-        st.markdown("""
-        - **USA/Tech**: SPY, QQQ, acciones USA
-        - **Argentina**: Acciones MERV
-        - **Renta Fija**: Bonos, LECAPs, cheques
-        - **Oro**: GLD, mineras de oro
-        - **Plata**: SLV
-        - **Crypto BTC**: Bitcoin ETFs
-        - **Crypto ETH**: Ethereum ETFs
-        - **Brasil**: EWZ
-        - **Commodities**: Cobre, uranio
-        - **Liquidez**: Pesos, USD, FCIs
+        sidebar_brand()
+        st.markdown("### Categorias")
+        st.caption("""
+USA/Tech · Argentina · Renta Fija · Oro · Plata · Crypto BTC · Crypto ETH · Brasil · Commodities · Liquidez
         """)
 
     # Mostrar resumen de carteras desde Google Sheets
@@ -644,16 +637,13 @@ def main():
 
             # Mostrar métricas
             st.markdown("---")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("💰 Total ARS", format_currency(valor_total_ars))
-            with col2:
-                st.metric("💵 Total USD", f"USD {valor_total_usd:,.2f}".replace(",", "."))
-            with col3:
-                st.metric("👥 Carteras", len(df_portfolios))
-            with col4:
-                fecha = df_portfolios['fecha'].iloc[0] if len(df_portfolios) > 0 else "N/A"
-                st.metric("📅 Fecha Datos", fecha)
+            fecha = df_portfolios['fecha'].iloc[0] if len(df_portfolios) > 0 else "N/A"
+            kpi_row([
+                {"label": "Total ARS", "value": format_currency(valor_total_ars), "color": "gold"},
+                {"label": "Total USD", "value": f"USD {valor_total_usd:,.2f}".replace(",", "."), "color": "green"},
+                {"label": "Carteras", "value": str(len(df_portfolios)), "color": "blue"},
+                {"label": "Fecha Datos", "value": str(fecha), "color": "cyan"},
+            ])
 
             # Tabla de carteras con formato correcto
             st.markdown("---")
@@ -731,11 +721,10 @@ def main():
 
             # Fila de totales
             st.markdown("---")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"### 💰 **TOTAL ARS: {format_currency(valor_total_ars, show_full=True)}**")
-            with col2:
-                st.markdown(f"### 💵 **TOTAL USD: USD {valor_total_usd:,.2f}**".replace(",", "."))
+            kpi_row([
+                {"label": "Total ARS (completo)", "value": format_currency(valor_total_ars, show_full=True), "color": "gold"},
+                {"label": "Total USD (completo)", "value": f"USD {valor_total_usd:,.2f}".replace(",", "."), "color": "green"},
+            ])
 
         else:
             st.info("No hay datos cargados. Arrastrá archivos Excel arriba para comenzar.")

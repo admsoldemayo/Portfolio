@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import require_auth
 require_auth()
 
-from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK
+from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK, kpi_row, sidebar_brand
 inject_css()
 
 from config import KNOWN_PORTFOLIOS, CATEGORY_COLORS, CATEGORIES, SECTORS, SECTOR_COLORS
@@ -436,16 +436,13 @@ if has_data_for_analysis:
     valor_total_usd = valor_total / tc_mep if tc_mep > 0 else 0
 
     # Métricas principales
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("💰 Valor Total ARS", format_currency(valor_total))
-    with col2:
-        st.metric("💵 Valor Total USD", f"USD {valor_total_usd:,.0f}")
-    with col3:
-        st.metric("📅 Fecha Datos", ultima_fecha)
-    with col4:
-        categorias_count = df_analysis['categoria'].nunique()
-        st.metric("🏷️ Categorías", categorias_count)
+    categorias_count = df_analysis['categoria'].nunique()
+    kpi_row([
+        {"label": "Valor Total ARS", "value": format_currency(valor_total), "color": "gold"},
+        {"label": "Valor Total USD", "value": f"USD {valor_total_usd:,.0f}", "color": "green"},
+        {"label": "Fecha Datos", "value": str(ultima_fecha), "color": "blue"},
+        {"label": "Categorias", "value": str(categorias_count), "color": "cyan"},
+    ])
 
     # Realizar análisis con AllocationManager
     manager = AllocationManager()
@@ -626,13 +623,11 @@ st.header("🔍 Activos Individuales")
 if not df_activos.empty:
     # Mostrar TC del archivo
     tc_info = sheets.get_tc_for_comitente(selected_comitente)
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("💱 TC MEP", f"${tc_info['tc_mep']:,.2f}")
-    with col2:
-        st.metric("💱 TC CCL", f"${tc_info['tc_ccl']:,.2f}")
-    with col3:
-        st.metric("📊 Total Activos", len(df_activos))
+    kpi_row([
+        {"label": "TC MEP", "value": f"${tc_info['tc_mep']:,.2f}", "color": "gold"},
+        {"label": "TC CCL", "value": f"${tc_info['tc_ccl']:,.2f}", "color": "gold"},
+        {"label": "Total Activos", "value": str(len(df_activos)), "color": "violet"},
+    ])
 
     st.markdown("---")
     st.subheader(f"📋 Activos de {portfolio_info['nombre']}")

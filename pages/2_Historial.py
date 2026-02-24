@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from auth import require_auth
 require_auth()
 
-from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK
+from style import inject_css, apply_plotly_theme, styled_pie_chart, page_header, CHART_COLORS, CATEGORY_COLORS_DARK, kpi_row
 inject_css()
 
 from config import KNOWN_PORTFOLIOS, CATEGORY_COLORS
@@ -208,15 +208,13 @@ if selected_comitente == "ALL":
             # Métricas agregadas
             valor_total_all = df_summary['valor_total'].sum()
             num_carteras = len(df_summary)
+            ultima_actualizacion = df_summary['fecha'].max()
 
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("💰 Valor Total Consolidado", format_currency(valor_total_all))
-            with col2:
-                st.metric("📁 Carteras Monitoreadas", num_carteras)
-            with col3:
-                ultima_actualizacion = df_summary['fecha'].max()
-                st.metric("📅 Última Actualización", ultima_actualizacion)
+            kpi_row([
+                {"label": "Valor Total Consolidado", "value": format_currency(valor_total_all), "color": "gold"},
+                {"label": "Carteras Monitoreadas", "value": str(num_carteras), "color": "blue"},
+                {"label": "Ultima Actualizacion", "value": str(ultima_actualizacion), "color": "cyan"},
+            ])
 
             # Tabla resumen
             st.markdown("#### Resumen por Cliente")
@@ -274,18 +272,13 @@ else:
         # Métricas principales
         valor_actual = df_evolution.iloc[-1]['valor_total']
         fecha_actual = df_evolution.iloc[-1]['fecha'].strftime('%Y-%m-%d')
+        snapshots_count = len(df_evolution)
 
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric("💰 Valor Actual", format_currency(valor_actual))
-
-        with col2:
-            st.metric("📅 Última Actualización", fecha_actual)
-
-        with col3:
-            snapshots_count = len(df_evolution)
-            st.metric("📸 Snapshots", snapshots_count)
+        kpi_row([
+            {"label": "Valor Actual", "value": format_currency(valor_actual), "color": "gold"},
+            {"label": "Ultima Actualizacion", "value": fecha_actual, "color": "cyan"},
+            {"label": "Snapshots", "value": str(snapshots_count), "color": "violet"},
+        ])
 
         # =======================================================================
         # GRÁFICO DE EVOLUCIÓN
@@ -313,32 +306,13 @@ else:
 
             if 'error' not in returns:
                 # Métricas de rentabilidad
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-                    st.metric(
-                        "Fecha Inicial",
-                        returns['fecha_inicio']
-                    )
-
-                with col2:
-                    st.metric(
-                        "Valor Inicial",
-                        format_currency(returns['valor_inicio'])
-                    )
-
-                with col3:
-                    st.metric(
-                        "Rentabilidad Total",
-                        f"{returns['total_return_pct']:+.2f}%",
-                        delta=format_currency(returns['total_return_abs'])
-                    )
-
-                with col4:
-                    st.metric(
-                        "Valor Final",
-                        format_currency(returns['valor_fin'])
-                    )
+                ret_color = "green" if returns['total_return_pct'] >= 0 else "red"
+                kpi_row([
+                    {"label": "Fecha Inicial", "value": str(returns['fecha_inicio']), "color": "blue"},
+                    {"label": "Valor Inicial", "value": format_currency(returns['valor_inicio']), "color": "cyan"},
+                    {"label": "Rentabilidad Total", "value": f"{returns['total_return_pct']:+.2f}%", "color": ret_color, "sub": format_currency(returns['total_return_abs'])},
+                    {"label": "Valor Final", "value": format_currency(returns['valor_fin']), "color": "gold"},
+                ])
 
                 # Gráfico de rentabilidad por categoría
                 fig_returns = create_returns_chart(returns)
